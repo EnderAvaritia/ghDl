@@ -36,11 +36,13 @@ class TestBuildParser:
 
 
 class TestRunCli:
-    def test_no_args_returns_zero(self):
-        """Without arguments, run_cli should print help and return 0."""
+    def test_no_args_returns_zero(self, monkeypatch):
+        """Without arguments, run_cli should start interactive mode and return 0."""
+        monkeypatch.setattr("builtins.input", lambda _: "n")
         assert run_cli([]) == 0
 
-    def test_returns_int(self):
+    def test_returns_int(self, monkeypatch):
+        monkeypatch.setattr("builtins.input", lambda _: "n")
         assert isinstance(run_cli([]), int)
 
     def test_help_flag(self):

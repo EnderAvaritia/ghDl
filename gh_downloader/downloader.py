@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import fnmatch
 import os
+import re
 import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -102,6 +103,7 @@ class DownloadManager:
         no_cache: bool = False,
         max_workers: int = 4,
         progress_callback: Optional[Callable[[str, int, int, float], None]] = None,
+        use_regex: bool = False,
     ) -> DownloadResult:
         """Download assets matching *pattern* from a release.
 
@@ -110,7 +112,7 @@ class DownloadManager:
         repo:
             ``"owner/name"`` identifying the GitHub repository.
         pattern:
-            One or more glob patterns (``fnmatch`` syntax).  Assets whose
+            One or more patterns (``fnmatch`` glob or regex syntax).  Assets whose
             ``name`` matches **any** of the patterns will be downloaded.
         version:
             Release tag name, or ``"latest"`` for the latest published
@@ -130,6 +132,10 @@ class DownloadManager:
         progress_callback:
             Optional callback invoked during each asset download with the
             signature ``(name: str, current: int, total: int, speed: float)``.
+        use_regex:
+            If ``True``, interpret *pattern* as regular expressions instead of
+            glob patterns.  Matching uses :func:`re.search` (match anywhere in
+            the asset name).
 
         Returns
         -------
@@ -158,7 +164,7 @@ class DownloadManager:
         assets = self._client.get_assets(repo, release["id"])
 
         # -- Glob matching --------------------------------------------------
-        matched = self.match_assets(assets, patterns)
+        matched = self.match_assets(assets, patterns, use_regex=use_regex)
         result.total = len(matched)
 
         if not matched:
@@ -343,19 +349,23 @@ class DownloadManager:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def match_assets(assets: list[dict[str, Any]], patterns: list[str]) -> list[dict[str, Any]]:
-        """Filter a list of asset dicts by glob patterns (OR logic).
+    def match_assets(assets: list[dict[str, Any]], patterns: list[str], use_regex: bool = False) -> list[dict[str, Any]]:
+        """Filter a list of asset dicts by patterns (OR logic).
 
         An asset is included if its ``"name"`` matches **any** of the
-        supplied patterns.  Matching is performed via :func:`fnmatch.fnmatch`.
+        supplied patterns.  Matching is performed via :func:`fnmatch.fnmatch`
+        for glob patterns, or :func:`re.search` when *use_regex* is ``True``.
 
         Parameters
         ----------
         assets:
             Asset dicts returned by :meth:`GitHubClient.get_assets`.
         patterns:
-            Glob patterns (e.g. ``["*.exe", "*.dmg"]``).  An empty list
-            or ``["*"]`` returns all assets unchanged.
+            Glob or regex patterns (e.g. ``["*.exe", ".*\\.exe$"]``).
+            An empty list or ``["*"]`` returns all assets unchanged.
+        use_regex:
+            If ``True``, interpret *patterns* as regular expressions using
+            :func:`re.search` (match anywhere in the asset name).
 
         Returns
         -------
@@ -369,9 +379,14 @@ class DownloadManager:
         for asset in assets:
             name = asset.get("name", "")
             for pattern in patterns:
-                if fnmatch.fnmatch(name, pattern):
-                    matched.append(asset)
-                    break
+                if use_regex:
+                    if re.search(pattern, name):
+                        matched.append(asset)
+                        break
+                else:
+                    if fnmatch.fnmatch(name, pattern):
+                        matched.append(asset)
+                        break
         return matched
 
     # ------------------------------------------------------------------
