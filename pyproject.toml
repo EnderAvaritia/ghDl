@@ -28,3 +28,6 @@ gh-dl = "gh_downloader.__main__:main"
 
 [tool.setuptools.packages.find]
 include = ["gh_downloader*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
