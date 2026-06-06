@@ -12,7 +12,7 @@ import os
 import re
 import time
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional, Union
 
@@ -220,7 +220,9 @@ class DownloadManager:
                 futures[future] = asset
 
             # -- Collect results as they complete ---------------------------
-            for future in as_completed(futures):
+            # Use a polling loop instead of as_completed() so Ctrl+C
+            # (which only sets stop_event on Windows) is detected promptly.
+            while futures:
                 if self._stop_event.is_set():
                     # Mark remaining futures as cancelled
                     for f in futures:
@@ -243,17 +245,25 @@ class DownloadManager:
                                     pass
                     break
 
-                asset = futures[future]
-                asset_name = asset["name"]
-                try:
-                    future.result()
-                    result.downloaded += 1
-                except KeyboardInterrupt:
-                    # Re-raise immediately – no point continuing
-                    raise
-                except Exception as exc:
-                    result.failed += 1
-                    result.errors.append(f"{asset_name}: {exc}")
+                # Poll with short timeout so stop_event is checked regularly
+                done, _ = wait(
+                    list(futures.keys()),
+                    timeout=0.5,
+                    return_when=FIRST_COMPLETED,
+                )
+
+                for future in done:
+                    asset = futures.pop(future)
+                    asset_name = asset["name"]
+                    try:
+                        future.result()
+                        result.downloaded += 1
+                    except KeyboardInterrupt:
+                        # Re-raise immediately – no point continuing
+                        raise
+                    except Exception as exc:
+                        result.failed += 1
+                        result.errors.append(f"{asset_name}: {exc}")
 
         return result
 
