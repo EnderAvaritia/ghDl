@@ -29,12 +29,12 @@ Assets for stedolan/jq (jq-1.8.1):
 ```
 
 ```
-$ gh-dl download stedolan/jq -p "*.exe"
+$ gh-dl download stedolan/jq -p "*linux*" -p "*.exe"
 
-[1/3] jq-win64.exe ... 1.00 MB [100%] -> downloads/stedolan/jq/jq-1.8.1/jq-win64.exe
-[2/3] jq-linux64 ... SKIP (pattern mismatch)
-[3/3] jq-osx-amd64 ... SKIP (pattern mismatch)
-Done: 1 downloaded, 0 cached, 0 errors
+  jq-linux64: [####################] 100% 1.95 MB/1.95 MB 2.3 MB/s
+  jq-linux-arm: [####################] 100% 1.71 MB/1.71 MB 1.9 MB/s
+  jq-win64.exe: [####################] 100% 1.00 MB/1.00 MB 1.5 MB/s
+Done: 3 downloaded, 0 cached, 0 errors
 ```
 
 ## 功能特性
@@ -42,6 +42,7 @@ Done: 1 downloaded, 0 cached, 0 errors
 - 三种操作模式：CLI 直接下载、配置文件批量下载、交互式引导下载
 - 并发下载：线程池同时下载，默认 4 个并发，通过 `-j` 调整
 - 灵活的模式匹配：支持 Glob（`fnmatch`，如 `*.exe`）和正则表达式（`--regex`，如 `.*\.exe$`）两种筛选方式
+- 实时进度条：下载时显示 `[####------------]` 进度条、百分比、速度
 - 智能缓存：已存在的文件若大小一致则自动跳过
 - 断点续传：中断后重新运行，从 `.part` 临时文件继续下载
 - 自动重试：下载失败最多重试 3 次，指数退避间隔（1s、3s、9s）
@@ -50,7 +51,8 @@ Done: 1 downloaded, 0 cached, 0 errors
 - 版本选择：支持最新版（`latest`）或指定标签版本
 - 扁平输出：可选择不创建 `owner/repo/version` 层级目录
 - 模拟运行：`--dry-run` 预览将下载的文件，不实际写入
-- 认证支持：通过 `GITHUB_TOKEN` 环境变量提升 API 限频配额
+- 认证支持：通过 `GITHUB_TOKEN` 环境变量或 `.gh-dl.json` 配置文件提升 API 限频配额
+- 持久配置：Token 和代理设置写入文件，无需每次终端重复设置
 
 ## 安装
 
@@ -264,6 +266,39 @@ gh-dl init [output]
 | 参数     | 说明                           |
 |----------|--------------------------------|
 | `output` | 输出路径，默认 `gh-dl-config.json` |
+| `--user`, `-u` | 生成用户配置文件（`.gh-dl.json`）而非仓库配置文件 |
+
+### 用户配置（持久化 Token / 代理）
+
+每次打开终端都要设置 `GITHUB_TOKEN` 和代理很麻烦。gh-dl 支持从 JSON 文件自动加载：
+
+```bash
+# 生成示例用户配置文件
+gh-dl init --user
+```
+
+编辑生成的 `.gh-dl.json`：
+
+```json
+{
+  "github_token": "ghp_your_token_here",
+  "http_proxy": "http://127.0.0.1:7890",
+  "https_proxy": "http://127.0.0.1:7890"
+}
+```
+
+保存后，**每次运行 gh-dl 自动加载**，无需再设环境变量。
+
+**搜索顺序**（优先级从高到低）：
+
+| 路径 | 说明 |
+|------|------|
+| `.gh-dl.json` | 当前目录（项目级） |
+| `%APPDATA%/gh-dl/config.json` | Windows 用户配置 |
+| `~/.config/gh-dl/config.json` | Linux/macOS 用户配置 |
+| `~/.gh-dl.json` | 用户目录 |
+
+> 环境变量优先级高于配置文件。同时设了环境变量和配置文件时，以环境变量为准。
 
 ### list 子命令
 
