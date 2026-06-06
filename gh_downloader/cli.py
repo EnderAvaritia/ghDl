@@ -16,7 +16,7 @@ from gh_downloader import __version__
 from gh_downloader.api import GitHubClient, GitHubError
 from gh_downloader.config import ConfigError, create_example_config, load_config
 from gh_downloader.downloader import DownloadManager, DownloadResult
-from gh_downloader.utils import format_size, parse_repo_string
+from gh_downloader.utils import format_size, format_speed, parse_repo_string
 
 # ---------------------------------------------------------------------------
 # Parser construction
@@ -161,6 +161,47 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 # ---------------------------------------------------------------------------
+# Progress bar
+# ---------------------------------------------------------------------------
+
+
+def _progress_callback(name: str, current: int, total: int, speed: float) -> None:
+    """Print a single-line progress bar for asset download.
+
+    Uses carriage return to overwrite the current line, avoiding
+    terminal spam.  Final status (100%) prints a newline.
+
+    Parameters
+    ----------
+    name:
+        Asset filename.
+    current:
+        Bytes downloaded so far.
+    total:
+        Total bytes of the asset.
+    speed:
+        Transfer rate in bytes/second.
+    """
+    if total <= 0:
+        return
+
+    pct = current / total
+    bar_width = 20
+    filled = int(bar_width * pct)
+    bar = "#" * filled + "-" * (bar_width - filled)
+    pct_display = f"{pct * 100:.0f}"
+    current_str = format_size(current)
+    total_str = format_size(total)
+    speed_str = format_speed(speed)
+
+    print(
+        f"  {name}: [{bar}] {pct_display:>3}% {current_str}/{total_str} {speed_str}",
+        end="\r" if current < total else "\n",
+        flush=True,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Subcommand handlers
 # ---------------------------------------------------------------------------
 
@@ -187,6 +228,7 @@ def _handle_download(args: argparse.Namespace) -> int:
         no_cache=args.no_cache,
         max_workers=args.concurrent,
         use_regex=args.regex,
+        progress_callback=_progress_callback,
     )
 
     # Print summary
@@ -239,6 +281,7 @@ def _handle_config(args: argparse.Namespace) -> int:
             dry_run=args.dry_run,
             max_workers=args.concurrent,
             use_regex=args.regex,
+            progress_callback=_progress_callback,
         )
 
         if args.dry_run:
