@@ -185,7 +185,9 @@ def _handle_download(args: argparse.Namespace) -> int:
         _print_download_summary(owner, repo, result)
 
     if result.failed > 0:
+        # Print error messages so user knows what went wrong
         for err in result.errors:
+            print(f"  Error: {err}", file=sys.stderr)
             err_lower = str(err).lower()
             if "not found" in err_lower or "404" in err_lower or "rate limit" in err_lower:
                 return 2
