@@ -10,11 +10,19 @@ All user-facing output goes to stdout (info) or stderr (errors).
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+import threading
 
 from gh_downloader import __version__
 from gh_downloader.api import GitHubClient, GitHubError
-from gh_downloader.config import ConfigError, create_example_config, load_config
+from gh_downloader.config import (
+    ConfigError,
+    create_example_config,
+    create_user_config_example,
+    load_config,
+    load_user_config,
+)
 from gh_downloader.downloader import DownloadManager, DownloadResult
 from gh_downloader.utils import format_size, format_speed, parse_repo_string
 
@@ -141,6 +149,11 @@ def build_parser() -> argparse.ArgumentParser:
         default="gh-dl-config.json",
         help='Output path (default: gh-dl-config.json)',
     )
+    init.add_argument(
+        "--user", "-u",
+        action="store_true",
+        help="Generate a user config file for persistent settings (token, proxy)",
+    )
 
     # -- list ---------------------------------------------------------------
     lst = subparsers.add_parser(
@@ -161,44 +174,116 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 # ---------------------------------------------------------------------------
-# Progress bar
+# Progress bar (multi-line, thread-safe)
 # ---------------------------------------------------------------------------
 
 
-def _progress_callback(name: str, current: int, total: int, speed: float) -> None:
-    """Print a single-line progress bar for asset download.
+def _supports_ansi() -> bool:
+    """Check whether ANSI escape codes are supported on stdout.
 
-    Uses carriage return to overwrite the current line, avoiding
-    terminal spam.  Final status (100%) prints a newline.
-
-    Parameters
-    ----------
-    name:
-        Asset filename.
-    current:
-        Bytes downloaded so far.
-    total:
-        Total bytes of the asset.
-    speed:
-        Transfer rate in bytes/second.
+    Returns ``False`` when stdout is not a TTY or on older Windows
+    builds where virtual-terminal processing cannot be enabled.
     """
-    if total <= 0:
-        return
+    if not sys.stdout.isatty():
+        return False
+    if os.name == "nt":
+        try:
+            import ctypes
 
-    pct = current / total
-    bar_width = 20
-    filled = int(bar_width * pct)
-    bar = "#" * filled + "-" * (bar_width - filled)
-    pct_display = f"{pct * 100:.0f}"
-    current_str = format_size(current)
-    total_str = format_size(total)
-    speed_str = format_speed(speed)
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
+            mode = ctypes.c_uint32()
+            kernel32.GetConsoleMode(handle, ctypes.byref(mode))
+            # ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+            kernel32.SetConsoleMode(handle, mode.value | 0x0004)
+            return True
+        except Exception:
+            return False
+    return True
 
-    print(
-        f"  {name}: [{bar}] {pct_display:>3}% {current_str}/{total_str} {speed_str}",
-        end="\r" if current < total else "\n",
-        flush=True,
-    )
+
+class ProgressTracker:
+    """Multi-line progress display for concurrent downloads.
+
+    Uses ANSI escape codes to maintain a fixed region of progress bars
+    that update in-place without terminal spam.  Falls back to printing
+    one completion line per file when ANSI is not available.
+
+    Thread-safe via :class:`threading.Lock`.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        # name -> (current, total, speed)
+        self._progress: dict[str, tuple[int, int, float]] = {}
+        self._order: list[str] = []
+        self._lines_printed = 0
+        self._use_ansi = _supports_ansi()
+
+    def update(self, name: str, current: int, total: int, speed: float) -> None:
+        """Called by the downloader for every chunk received."""
+        with self._lock:
+            if name not in self._progress:
+                self._order.append(name)
+            self._progress[name] = (current, total, speed)
+            if self._use_ansi:
+                self._redraw_ansi()
+            else:
+                self._redraw_fallback(name, current, total)
+
+    # -- ANSI re-draw (Windows 10+ / Unix) --------------------------------
+
+    def _redraw_ansi(self) -> None:
+        """Re-draw all active progress bars using cursor-up escape codes."""
+        if self._lines_printed > 0:
+            print(f"\033[{self._lines_printed}A", end="")
+
+        lines: list[str] = []
+        for name in self._order:
+            current, total, speed = self._progress.get(name, (0, 0, 0.0))
+            lines.append(self._format_line(name, current, total, speed))
+
+        output = "\n".join(lines)
+        print(output, end="")
+        self._lines_printed = len(lines)
+
+        if self._all_done():
+            print()  # final newline to lock the output
+
+    # -- Fallback (no ANSI) ------------------------------------------------
+
+    def _redraw_fallback(self, name: str, current: int, total: int) -> None:
+        """Print a simple completion line when ANSI is not available."""
+        if current >= total > 0:
+            print(f"  {name}: 100%")
+
+    # -- Helpers -----------------------------------------------------------
+
+    @staticmethod
+    def _format_line(name: str, current: int, total: int, speed: float) -> str:
+        """Build a single progress-bar line."""
+        if total <= 0:
+            return f"  {name}: [?]"
+
+        pct = current / total
+        bar_width = 20
+        filled = int(bar_width * pct)
+        bar = "#" * filled + "-" * (bar_width - filled)
+        pct_display = f"{pct * 100:.0f}"
+        current_str = format_size(current)
+        total_str = format_size(total)
+        speed_str = format_speed(speed)
+        return (
+            f"  {name}: [{bar}] {pct_display:>3}%"
+            f" {current_str}/{total_str} {speed_str}"
+        )
+
+    def _all_done(self) -> bool:
+        """Return ``True`` when every tracked asset has reached 100 %."""
+        return all(
+            current >= total
+            for current, total, _ in self._progress.values()
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -217,6 +302,7 @@ def _handle_download(args: argparse.Namespace) -> int:
 
     client = GitHubClient()
     manager = DownloadManager(client=client)
+    tracker = ProgressTracker()
 
     result: DownloadResult = manager.download_release(
         repo=repo_full,
@@ -228,7 +314,7 @@ def _handle_download(args: argparse.Namespace) -> int:
         no_cache=args.no_cache,
         max_workers=args.concurrent,
         use_regex=args.regex,
-        progress_callback=_progress_callback,
+        progress_callback=tracker.update,
     )
 
     # Print summary
@@ -271,6 +357,7 @@ def _handle_config(args: argparse.Namespace) -> int:
 
         client = GitHubClient()
         manager = DownloadManager(client=client)
+        tracker = ProgressTracker()
 
         result: DownloadResult = manager.download_release(
             repo=repo_full,
@@ -281,7 +368,7 @@ def _handle_config(args: argparse.Namespace) -> int:
             dry_run=args.dry_run,
             max_workers=args.concurrent,
             use_regex=args.regex,
-            progress_callback=_progress_callback,
+            progress_callback=tracker.update,
         )
 
         if args.dry_run:
@@ -305,8 +392,13 @@ def _handle_init(args: argparse.Namespace) -> int:
     Returns:
         0 on success.
     """
-    create_example_config(args.output)
-    print(f"Example configuration written to {args.output}")
+    if args.user:
+        path = create_user_config_example()
+        print(f"Example user configuration written to {path}")
+        print("Edit the file and fill in your GitHub token and proxy settings.")
+    else:
+        create_example_config(args.output)
+        print(f"Example configuration written to {args.output}")
     return 0
 
 
@@ -388,6 +480,15 @@ def run_cli(argv: list[str] | None = None) -> int:
         - ``1``: partial failure (some downloads failed).
         - ``2``: fatal error (bad config, API error, missing file, interrupt).
     """
+    # Apply persistent user config before anything else
+    user_cfg = load_user_config()
+    if user_cfg.github_token and "GITHUB_TOKEN" not in os.environ:
+        os.environ["GITHUB_TOKEN"] = user_cfg.github_token
+    if user_cfg.http_proxy and "HTTP_PROXY" not in os.environ:
+        os.environ["HTTP_PROXY"] = user_cfg.http_proxy
+    if user_cfg.https_proxy and "HTTPS_PROXY" not in os.environ:
+        os.environ["HTTPS_PROXY"] = user_cfg.https_proxy
+
     parser = build_parser()
     args = parser.parse_args(argv)
 

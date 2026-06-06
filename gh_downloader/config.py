@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -195,7 +196,7 @@ def create_example_config(path: str) -> None:
             "Supported fields per entry:\n"
             "  owner   - GitHub user or organisation name (required)\n"
             "  repo    - Repository name (required)\n"
-            "  pattern - Glob pattern to match asset filenames (required)\n"
+            "  pattern - Glob (or regex with --regex) pattern to match asset filenames (required)\n"
             "  version - Release tag or 'latest' (optional, default 'latest')\n"
             "  output  - Download directory (optional, default: current dir)"
         ),
@@ -219,3 +220,99 @@ def create_example_config(path: str) -> None:
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(example, fh, indent=2, ensure_ascii=False)
         fh.write("\n")
+
+
+# ---------------------------------------------------------------------------
+# User-level config (persistent token / proxy settings)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class UserConfig:
+    """Persistent user-level configuration.
+
+    Stored in a JSON file on disk and applied before any API calls.
+    Environment variables take precedence over these values.
+    """
+
+    github_token: str | None = None
+    http_proxy: str | None = None
+    https_proxy: str | None = None
+
+
+def _user_config_paths() -> list[Path]:
+    """Return user config file paths in priority order (first found wins)."""
+    paths: list[Path] = []
+    # 1. Current-directory .gh-dl.json
+    paths.append(Path(".gh-dl.json").resolve())
+    # 2. Platform-specific config dir
+    if sys.platform == "win32":
+        base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+    else:
+        base = Path.home() / ".config"
+    paths.append(base / "gh-dl" / "config.json")
+    # 3. Home-directory dotfile
+    paths.append(Path.home() / ".gh-dl.json")
+    return paths
+
+
+def load_user_config() -> UserConfig:
+    """Load user-level config from the first existing config file.
+
+    Searches in order:
+    1. ``.gh-dl.json`` in the current working directory.
+    2. ``%APPDATA%/gh-dl/config.json`` (Windows) or
+       ``~/.config/gh-dl/config.json`` (Unix).
+    3. ``~/.gh-dl.json``.
+
+    Returns an empty :class:`UserConfig` if no file is found or none can
+    be parsed.
+    """
+    for path in _user_config_paths():
+        if path.is_file():
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    data = json.load(fh)
+                return UserConfig(
+                    github_token=data.get("github_token"),
+                    http_proxy=data.get("http_proxy"),
+                    https_proxy=data.get("https_proxy"),
+                )
+            except (json.JSONDecodeError, OSError):
+                continue
+    return UserConfig()
+
+
+def create_user_config_example(path: str | None = None) -> str:
+    """Write an example user config JSON file.
+
+    Parameters
+    ----------
+    path:
+        Destination path.  If ``None``, uses the first path from
+        :func:`_user_config_paths` (``.gh-dl.json`` in CWD).
+
+    Returns
+    -------
+    str
+        The absolute path that was written to.
+    """
+    if path is None:
+        path = str(_user_config_paths()[0])
+
+    example = {
+        "//_comment": (
+            "gh-dl user configuration file.\n"
+            "Settings here persist across terminal sessions.\n"
+            "All fields are optional; leave blank or omit to use env vars."
+        ),
+        "github_token": "your_github_token_here",
+        "http_proxy": "http://127.0.0.1:7890",
+        "https_proxy": "http://127.0.0.1:7890",
+    }
+
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(example, fh, indent=2, ensure_ascii=False)
+        fh.write("\n")
+    return path
