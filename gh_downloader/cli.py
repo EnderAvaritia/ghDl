@@ -235,7 +235,9 @@ class ProgressTracker:
 
     def _redraw_ansi(self) -> None:
         """Re-draw all active progress bars using cursor-up escape codes."""
-        if self._lines_printed > 0:
+        if self._lines_printed == 0:
+            print()  # blank line before first progress display
+        else:
             print(f"\033[{self._lines_printed}A", end="")
 
         lines: list[str] = []
