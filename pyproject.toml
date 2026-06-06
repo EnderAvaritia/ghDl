@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gh-downloader"
+version = "0.1.0"
+description = "Batch GitHub Release downloader"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "gh-dl contributors" },
+]
+
+dependencies = [
+    "requests",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "respx",
+]
+
+[project.scripts]
+gh-dl = "gh_downloader.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["gh_downloader*"]

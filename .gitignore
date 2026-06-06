@@ -1,0 +1,28 @@
+# Python
+*.pyc
+*.pyo
+__pycache__/
+*.egg-info/
+*.egg
+dist/
+build/
+*.whl
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE / Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS-specific
+Thumbs.db
+.DS_Store
+
+# Project-specific
+.omo/evidence/
