@@ -179,54 +179,62 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 class ProgressTracker:
-    """Single-line progress display for concurrent downloads.
+    """Progress display for concurrent downloads.
 
-    Prints a compact summary line updated via ``\\r``, plus a completion
-    line per file when each finishes.  Works reliably on Windows CMD
-    without ANSI escape codes.
+    Prints a progress bar (``\\r`` single-line) for the most recently
+    updated file, plus a permanent completion line when each file finishes.
+    No ANSI escape codes — works on all terminals.
     """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._progress: dict[str, tuple[int, int, float]] = {}
-        self._order: list[str] = []
         self._finished: set[str] = set()
+        self._shown_first = False
 
     def update(self, name: str, current: int, total: int, speed: float) -> None:
         """Called by the downloader for every chunk received."""
         with self._lock:
-            if name not in self._progress:
-                self._order.append(name)
-            self._progress[name] = (current, total, speed)
-
             if current >= total > 0 and name not in self._finished:
-                # File just finished — print completion line
                 self._finished.add(name)
                 self._print_completion(name, total, speed)
-                # If all done, return; otherwise print the summary line
-                # for remaining files
-                if len(self._finished) == len(self._progress):
-                    return
+                return
 
-            # Print compact summary line (overwrites with \r)
-            parts: list[str] = []
-            for n in self._order:
-                if n in self._finished:
-                    continue
-                c, t, _ = self._progress.get(n, (0, 0, 0.0))
-                if t > 0:
-                    pct = int(c / t * 100)
-                    parts.append(f"{n} {pct}%")
-                else:
-                    parts.append(f"{n} ?")
-            summary = ", ".join(parts)
-            print(f"  Downloading: {summary}\r", end="", flush=True)
+            if not self._shown_first:
+                print()  # blank line before first progress
+                self._shown_first = True
 
-    def _print_completion(self, name: str, total: int, speed: float) -> None:
-        """Print a single completion line for a fully-downloaded asset."""
+            self._print_progress(name, current, total, speed)
+
+    def _print_progress(self, name: str, current: int, total: int, speed: float) -> None:
+        """Print a single-line progress bar (overwrites with \\r)."""
+        if total <= 0:
+            print(f"  {name}: [?]\r", end="", flush=True)
+            return
+
+        pct = current / total
+        bar_width = 20
+        filled = int(bar_width * pct)
+        bar = "#" * filled + "-" * (bar_width - filled)
+        pct_display = f"{pct * 100:.0f}"
+        current_str = format_size(current)
         total_str = format_size(total)
         speed_str = format_speed(speed)
-        print(f"  {name}: 100% ({total_str}) {speed_str}")
+        print(
+            f"  {name}: [{bar}] {pct_display:>3}%"
+            f" {current_str}/{total_str} {speed_str}\r",
+            end="",
+            flush=True,
+        )
+
+    def _print_completion(self, name: str, total: int, speed: float) -> None:
+        """Print a permanent completion line."""
+        total_str = format_size(total)
+        speed_str = format_speed(speed)
+        bar = "#" * 20
+        print(
+            f"  {name}: [{bar}] 100%"
+            f" {total_str}/{total_str} {speed_str}"
+        )
 
 
 # ---------------------------------------------------------------------------
