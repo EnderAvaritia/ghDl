@@ -89,6 +89,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Bypass local cache and re-download all assets",
     )
+    dl.add_argument(
+        "--regex",
+        action="store_true",
+        help="Treat --pattern as regular expressions instead of globs",
+    )
 
     # -- config -------------------------------------------------------------
     cfg = subparsers.add_parser(
@@ -119,6 +124,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=4,
         help="Number of concurrent downloads (default: 4)",
+    )
+    cfg.add_argument(
+        "--regex",
+        action="store_true",
+        help="Treat patterns as regular expressions instead of globs",
     )
 
     # -- init ---------------------------------------------------------------
@@ -176,6 +186,7 @@ def _handle_download(args: argparse.Namespace) -> int:
         dry_run=args.dry_run,
         no_cache=args.no_cache,
         max_workers=args.concurrent,
+        use_regex=args.regex,
     )
 
     # Print summary
@@ -227,6 +238,7 @@ def _handle_config(args: argparse.Namespace) -> int:
             flat=args.flat,
             dry_run=args.dry_run,
             max_workers=args.concurrent,
+            use_regex=args.regex,
         )
 
         if args.dry_run:

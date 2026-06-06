@@ -28,6 +28,7 @@ class _RepoEntry(NamedTuple):
     repo: str
     pattern: str
     version: str
+    use_regex: bool
 
 
 # ---------------------------------------------------------------------------
@@ -161,11 +162,15 @@ def run_interactive(
                 default="latest",
             )
 
-            queue.append(_RepoEntry(owner, repo, pattern, version))
+            use_regex_str = _prompt("  Use regex? (y/N): ", default="n")
+            use_regex = use_regex_str.lower().startswith("y")
+
+            queue.append(_RepoEntry(owner, repo, pattern, version, use_regex))
             # Estimate: we don't know until we call the API, so we just show
             # the raw count.
+            mode = "regex" if use_regex else "glob"
             print(
-                f"  -> [{owner}/{repo}] pattern={pattern!r} version={version}"
+                f"  -> [{owner}/{repo}] pattern={pattern!r} version={version} ({mode})"
             )
             print()
 
@@ -204,6 +209,7 @@ def run_interactive(
                     flat=flat,
                     dry_run=dry_run,
                     max_workers=max_workers,
+                    use_regex=entry.use_regex,
                     progress_callback=_progress_callback,
                 )
             except GitHubError as exc:

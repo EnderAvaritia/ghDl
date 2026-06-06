@@ -1,6 +1,6 @@
 # gh-dl: 批量 GitHub Release 下载工具
 
-gh-dl 是一个命令行工具，用于从 GitHub Release 页面批量下载资源文件。它支持 glob 模式匹配文件筛选、并发下载、智能缓存（跳过已下载的相同文件）、断点续传和三种操作模式。你无需手动点击页面，一条命令即可批量获取任意仓库的发布包。
+gh-dl 是一个命令行工具，用于从 GitHub Release 页面批量下载资源文件。它支持 glob 或正则表达式文件筛选、并发下载、智能缓存（跳过已下载的相同文件）、断点续传和三种操作模式。你无需手动点击页面，一条命令即可批量获取任意仓库的发布包。
 
 - [用法一览](#用法一览)
 - [功能特性](#功能特性)
@@ -41,7 +41,7 @@ Done: 1 downloaded, 0 cached, 0 errors
 
 - 三种操作模式：CLI 直接下载、配置文件批量下载、交互式引导下载
 - 并发下载：线程池同时下载，默认 4 个并发，通过 `-j` 调整
-- Glob 模式匹配：使用 `fnmatch` 语法筛选文件名（如 `*.exe`、`*linux*`、`*.{zip,gz}`）
+- 灵活的模式匹配：支持 Glob（`fnmatch`，如 `*.exe`）和正则表达式（`--regex`，如 `.*\.exe$`）两种筛选方式
 - 智能缓存：已存在的文件若大小一致则自动跳过
 - 断点续传：中断后重新运行，从 `.part` 临时文件继续下载
 - 自动重试：下载失败最多重试 3 次，指数退避间隔（1s、3s、9s）
@@ -227,7 +227,8 @@ gh-dl download <repo> -p <pattern> [options]
 | 参数                        | 说明                                        |
 |-----------------------------|---------------------------------------------|
 | `repo`                      | 仓库标识，格式 `owner/repo` 或完整 GitHub URL |
-| `--pattern`, `-p`           | Glob 匹配模式（可重复，必填）                |
+| `--pattern`, `-p`           | 匹配模式（可重复，必填）                    |
+| `--regex`                   | 将 `--pattern` 解释为正则表达式而非 glob    |
 | `--version`, `-v`           | 版本标签，默认 `latest`                     |
 | `--output`, `-o`            | 输出目录，默认 `./downloads`                |
 | `--flat`                    | 扁平输出，不创建 `owner/repo/version` 层级  |
@@ -250,6 +251,7 @@ gh-dl config <config_file> [options]
 | `--flat`                    | 全局扁平输出覆盖                            |
 | `--dry-run`                 | 模拟运行                                    |
 | `--concurrent`, `-j`        | 并发下载数，默认 4                          |
+| `--regex`                   | 将 `--pattern` 解释为正则表达式而非 glob    |
 
 ### init 子命令
 
@@ -319,6 +321,23 @@ gh-dl list owner/repo
 ```bash
 gh-dl download neovim/neovim -p "*.zip" -p "*.appimage" -p "*.gz"
 ```
+
+### 使用正则表达式筛选
+
+默认模式使用 glob 语法，添加 `--regex` 后使用正则表达式匹配：
+
+```bash
+# 下载所有 .zip 文件（正则写法）
+gh-dl download neovim/neovim -p ".*\.zip$" --regex
+
+# 下载 Windows 相关文件（64位或ARM64）
+gh-dl download neovim/neovim -p "win(64|arm64)" --regex
+
+# 组合多个正则模式
+gh-dl download neovim/neovim -p ".*\.(msi|exe)$" -p "win64.*" --regex
+```
+
+正则匹配使用 `re.search()`，只要模式在文件名中任意位置匹配即命中。不加 `--regex` 时行为不变，完全向后兼容。
 
 ### 批量下载后打包
 

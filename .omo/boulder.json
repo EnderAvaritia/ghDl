@@ -1,0 +1,195 @@
+{
+  "schema_version": 2,
+  "active_work_id": "github-release-downloader-a64a58cb",
+  "works": {
+    "github-release-downloader-a64a58cb": {
+      "work_id": "github-release-downloader-a64a58cb",
+      "active_plan": "E:\\Programme\\批量下载github文件\\.omo\\plans\\github-release-downloader.md",
+      "plan_name": "github-release-downloader",
+      "status": "completed",
+      "started_at": "2026-06-06T04:22:46.557Z",
+      "updated_at": "2026-06-06T05:00:41.684Z",
+      "session_ids": [
+        "opencode:ses_164f8131affe6bGcYqda6wAYx9"
+      ],
+      "session_origins": {
+        "opencode:ses_164f8131affe6bGcYqda6wAYx9": "direct"
+      },
+      "agent": "atlas",
+      "task_sessions": {
+        "todo:1": {
+          "task_key": "todo:1",
+          "task_label": "1",
+          "task_title": "Project scaffolding (pyproject.toml, package skeleton, virtual environment)",
+          "session_id": "ses_164d46830ffeKO2Oz64swUjmbo",
+          "agent": "Sisyphus-Junior",
+          "category": "quick",
+          "updated_at": "2026-06-06T04:25:26.856Z",
+          "started_at": "2026-06-06T04:24:19.344Z",
+          "status": "completed",
+          "ended_at": "2026-06-06T04:25:26.856Z",
+          "elapsed_ms": 67512
+        },
+        "todo:5": {
+          "task_key": "todo:5",
+          "task_label": "5",
+          "task_title": "Download engine (downloader.py) — concurrent downloads, resume, retry, caching",
+          "session_id": "ses_164d190c9ffeQ0fDLvQ9KnPMvE",
+          "agent": "Sisyphus-Junior",
+          "category": "deep",
+          "updated_at": "2026-06-06T04:30:14.807Z",
+          "started_at": "2026-06-06T04:28:29.843Z",
+          "status": "completed",
+          "ended_at": "2026-06-06T04:30:14.807Z",
+          "elapsed_ms": 104964
+        },
+        "final-wave:f1": {
+          "task_key": "final-wave:f1",
+          "task_label": "F1",
+          "task_title": "Plan Compliance Audit — RE-CHECK after bug fixes.",
+          "session_id": "opencode:ses_164b3abc5ffeV3TtKxTrUnsGPD",
+          "agent": "oracle",
+          "started_at": "2026-06-06T04:32:34.192Z",
+          "status": "completed",
+          "updated_at": "2026-06-06T04:59:42.641Z",
+          "ended_at": "2026-06-06T04:59:42.641Z",
+          "elapsed_ms": 1628449
+        },
+        "final-wave:f2": {
+          "task_key": "final-wave:f2",
+          "task_label": "F2",
+          "task_title": "Code Quality Review — RE-CHECK after bug fixes.",
+          "session_id": "opencode:ses_164b3a047ffe54A2BnDC97WeUe",
+          "agent": "Sisyphus-Junior",
+          "category": "unspecified-high",
+          "started_at": "2026-06-06T04:36:54.673Z",
+          "status": "completed",
+          "updated_at": "2026-06-06T04:59:46.912Z",
+          "ended_at": "2026-06-06T04:59:46.912Z",
+          "elapsed_ms": 1372239
+        },
+        "final-wave:f4": {
+          "task_key": "final-wave:f4",
+          "task_label": "F4",
+          "task_title": "Scope Fidelity Check — Verify 1:1 mapping between plan specification and implementation for the `gh-dl` tool. Read \"What to do\" for each task, read the actual diff (git log/diff), verify everything in spec was built and nothing beyond spec was built.",
+          "session_id": "ses_164c8e971ffevjOAFqKR65zAPh",
+          "agent": "Sisyphus-Junior",
+          "category": "deep",
+          "updated_at": "2026-06-06T05:00:26.657Z",
+          "started_at": "2026-06-06T04:36:55.850Z",
+          "status": "completed",
+          "ended_at": "2026-06-06T05:00:26.657Z",
+          "elapsed_ms": 1410807
+        },
+        "final-wave:f3": {
+          "task_key": "final-wave:f3",
+          "task_label": "F3",
+          "task_title": "Real Manual QA — Execute QA scenarios for the `gh-dl` tool end-to-end. Start from clean state and test the actual user-facing commands.",
+          "session_id": "ses_164c8ff47ffeHiNdQcW2PZ1nLU",
+          "agent": "Sisyphus-Junior",
+          "category": "unspecified-high",
+          "updated_at": "2026-06-06T05:00:23.074Z",
+          "started_at": "2026-06-06T04:38:03.011Z",
+          "status": "completed",
+          "ended_at": "2026-06-06T05:00:23.074Z",
+          "elapsed_ms": 1340063
+        }
+      },
+      "ended_at": "2026-06-06T05:00:41.684Z",
+      "elapsed_ms": 2275127
+    }
+  },
+  "active_plan": "E:\\Programme\\批量下载github文件\\.omo\\plans\\github-release-downloader.md",
+  "started_at": "2026-06-06T04:22:46.557Z",
+  "status": "completed",
+  "updated_at": "2026-06-06T05:00:41.684Z",
+  "session_ids": [
+    "opencode:ses_164f8131affe6bGcYqda6wAYx9"
+  ],
+  "session_origins": {
+    "opencode:ses_164f8131affe6bGcYqda6wAYx9": "direct"
+  },
+  "plan_name": "github-release-downloader",
+  "task_sessions": {
+    "todo:1": {
+      "task_key": "todo:1",
+      "task_label": "1",
+      "task_title": "Project scaffolding (pyproject.toml, package skeleton, virtual environment)",
+      "session_id": "ses_164d46830ffeKO2Oz64swUjmbo",
+      "agent": "Sisyphus-Junior",
+      "category": "quick",
+      "updated_at": "2026-06-06T04:25:26.856Z",
+      "started_at": "2026-06-06T04:24:19.344Z",
+      "status": "completed",
+      "ended_at": "2026-06-06T04:25:26.856Z",
+      "elapsed_ms": 67512
+    },
+    "todo:5": {
+      "task_key": "todo:5",
+      "task_label": "5",
+      "task_title": "Download engine (downloader.py) — concurrent downloads, resume, retry, caching",
+      "session_id": "ses_164d190c9ffeQ0fDLvQ9KnPMvE",
+      "agent": "Sisyphus-Junior",
+      "category": "deep",
+      "updated_at": "2026-06-06T04:30:14.807Z",
+      "started_at": "2026-06-06T04:28:29.843Z",
+      "status": "completed",
+      "ended_at": "2026-06-06T04:30:14.807Z",
+      "elapsed_ms": 104964
+    },
+    "final-wave:f1": {
+      "task_key": "final-wave:f1",
+      "task_label": "F1",
+      "task_title": "Plan Compliance Audit — RE-CHECK after bug fixes.",
+      "session_id": "opencode:ses_164b3abc5ffeV3TtKxTrUnsGPD",
+      "agent": "oracle",
+      "started_at": "2026-06-06T04:32:34.192Z",
+      "status": "completed",
+      "updated_at": "2026-06-06T04:59:42.641Z",
+      "ended_at": "2026-06-06T04:59:42.641Z",
+      "elapsed_ms": 1628449
+    },
+    "final-wave:f2": {
+      "task_key": "final-wave:f2",
+      "task_label": "F2",
+      "task_title": "Code Quality Review — RE-CHECK after bug fixes.",
+      "session_id": "opencode:ses_164b3a047ffe54A2BnDC97WeUe",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "started_at": "2026-06-06T04:36:54.673Z",
+      "status": "completed",
+      "updated_at": "2026-06-06T04:59:46.912Z",
+      "ended_at": "2026-06-06T04:59:46.912Z",
+      "elapsed_ms": 1372239
+    },
+    "final-wave:f4": {
+      "task_key": "final-wave:f4",
+      "task_label": "F4",
+      "task_title": "Scope Fidelity Check — Verify 1:1 mapping between plan specification and implementation for the `gh-dl` tool. Read \"What to do\" for each task, read the actual diff (git log/diff), verify everything in spec was built and nothing beyond spec was built.",
+      "session_id": "ses_164c8e971ffevjOAFqKR65zAPh",
+      "agent": "Sisyphus-Junior",
+      "category": "deep",
+      "updated_at": "2026-06-06T05:00:26.657Z",
+      "started_at": "2026-06-06T04:36:55.850Z",
+      "status": "completed",
+      "ended_at": "2026-06-06T05:00:26.657Z",
+      "elapsed_ms": 1410807
+    },
+    "final-wave:f3": {
+      "task_key": "final-wave:f3",
+      "task_label": "F3",
+      "task_title": "Real Manual QA — Execute QA scenarios for the `gh-dl` tool end-to-end. Start from clean state and test the actual user-facing commands.",
+      "session_id": "ses_164c8ff47ffeHiNdQcW2PZ1nLU",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "updated_at": "2026-06-06T05:00:23.074Z",
+      "started_at": "2026-06-06T04:38:03.011Z",
+      "status": "completed",
+      "ended_at": "2026-06-06T05:00:23.074Z",
+      "elapsed_ms": 1340063
+    }
+  },
+  "agent": "atlas",
+  "ended_at": "2026-06-06T05:00:41.684Z",
+  "elapsed_ms": 2275127
+}
