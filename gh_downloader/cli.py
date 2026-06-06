@@ -174,51 +174,23 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 # ---------------------------------------------------------------------------
-# Progress bar (multi-line, thread-safe)
+# Progress display (thread-safe, no ANSI codes for Windows CMD compat)
 # ---------------------------------------------------------------------------
 
 
-def _supports_ansi() -> bool:
-    """Check whether ANSI escape codes are supported on stdout.
-
-    Returns ``False`` when stdout is not a TTY or on older Windows
-    builds where virtual-terminal processing cannot be enabled.
-    """
-    if not sys.stdout.isatty():
-        return False
-    if os.name == "nt":
-        try:
-            import ctypes
-
-            kernel32 = ctypes.windll.kernel32
-            handle = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
-            mode = ctypes.c_uint32()
-            kernel32.GetConsoleMode(handle, ctypes.byref(mode))
-            # ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
-            kernel32.SetConsoleMode(handle, mode.value | 0x0004)
-            return True
-        except Exception:
-            return False
-    return True
-
-
 class ProgressTracker:
-    """Multi-line progress display for concurrent downloads.
+    """Single-line progress display for concurrent downloads.
 
-    Uses ANSI escape codes to maintain a fixed region of progress bars
-    that update in-place without terminal spam.  Falls back to printing
-    one completion line per file when ANSI is not available.
-
-    Thread-safe via :class:`threading.Lock`.
+    Prints a compact summary line updated via ``\\r``, plus a completion
+    line per file when each finishes.  Works reliably on Windows CMD
+    without ANSI escape codes.
     """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        # name -> (current, total, speed)
         self._progress: dict[str, tuple[int, int, float]] = {}
         self._order: list[str] = []
-        self._lines_printed = 0
-        self._use_ansi = _supports_ansi()
+        self._finished: set[str] = set()
 
     def update(self, name: str, current: int, total: int, speed: float) -> None:
         """Called by the downloader for every chunk received."""
@@ -226,66 +198,35 @@ class ProgressTracker:
             if name not in self._progress:
                 self._order.append(name)
             self._progress[name] = (current, total, speed)
-            if self._use_ansi:
-                self._redraw_ansi()
-            else:
-                self._redraw_fallback(name, current, total)
 
-    # -- ANSI re-draw (Windows 10+ / Unix) --------------------------------
+            if current >= total > 0 and name not in self._finished:
+                # File just finished — print completion line
+                self._finished.add(name)
+                self._print_completion(name, total, speed)
+                # If all done, return; otherwise print the summary line
+                # for remaining files
+                if len(self._finished) == len(self._progress):
+                    return
 
-    def _redraw_ansi(self) -> None:
-        """Re-draw all active progress bars using cursor-up escape codes."""
-        if self._lines_printed == 0:
-            print()  # blank line before first progress display
-        else:
-            print(f"\033[{self._lines_printed}A", end="")
+            # Print compact summary line (overwrites with \r)
+            parts: list[str] = []
+            for n in self._order:
+                if n in self._finished:
+                    continue
+                c, t, _ = self._progress.get(n, (0, 0, 0.0))
+                if t > 0:
+                    pct = int(c / t * 100)
+                    parts.append(f"{n} {pct}%")
+                else:
+                    parts.append(f"{n} ?")
+            summary = ", ".join(parts)
+            print(f"  Downloading: {summary}\r", end="", flush=True)
 
-        lines: list[str] = []
-        for name in self._order:
-            current, total, speed = self._progress.get(name, (0, 0, 0.0))
-            lines.append(self._format_line(name, current, total, speed))
-
-        output = "\n".join(lines)
-        print(output, end="")
-        self._lines_printed = len(lines)
-
-        if self._all_done():
-            print()  # final newline to lock the output
-
-    # -- Fallback (no ANSI) ------------------------------------------------
-
-    def _redraw_fallback(self, name: str, current: int, total: int) -> None:
-        """Print a simple completion line when ANSI is not available."""
-        if current >= total > 0:
-            print(f"  {name}: 100%")
-
-    # -- Helpers -----------------------------------------------------------
-
-    @staticmethod
-    def _format_line(name: str, current: int, total: int, speed: float) -> str:
-        """Build a single progress-bar line."""
-        if total <= 0:
-            return f"  {name}: [?]"
-
-        pct = current / total
-        bar_width = 20
-        filled = int(bar_width * pct)
-        bar = "#" * filled + "-" * (bar_width - filled)
-        pct_display = f"{pct * 100:.0f}"
-        current_str = format_size(current)
+    def _print_completion(self, name: str, total: int, speed: float) -> None:
+        """Print a single completion line for a fully-downloaded asset."""
         total_str = format_size(total)
         speed_str = format_speed(speed)
-        return (
-            f"  {name}: [{bar}] {pct_display:>3}%"
-            f" {current_str}/{total_str} {speed_str}"
-        )
-
-    def _all_done(self) -> bool:
-        """Return ``True`` when every tracked asset has reached 100 %."""
-        return all(
-            current >= total
-            for current, total, _ in self._progress.values()
-        )
+        print(f"  {name}: 100% ({total_str}) {speed_str}")
 
 
 # ---------------------------------------------------------------------------
