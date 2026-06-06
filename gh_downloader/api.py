@@ -74,7 +74,8 @@ class GitHubClient:
         })
 
         # Resolve token: explicit arg > env var
-        self._token = token if token is not None else os.environ.get("GITHUB_TOKEN")
+        raw_token = token if token is not None else os.environ.get("GITHUB_TOKEN")
+        self._token = raw_token.strip("\"'") if raw_token else None
         if self._token:
             self._session.headers["Authorization"] = f"Bearer {self._token}"
 
