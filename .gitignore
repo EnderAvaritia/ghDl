@@ -23,6 +23,11 @@ env/
 # OS-specific
 Thumbs.db
 .DS_Store
+desktop.ini
+
+# Downloaded binaries (Windows)
+*.exe
+*.dll
 
 # Project-specific
 .omo/evidence/

@@ -91,9 +91,10 @@ def build_output_path(
                 f"Warning: flat output collision -- {asset_name!r} already exists at {path!r}",
                 file=sys.stderr,
             )
-        return path
+        return try_enable_long_paths(path)
 
-    return os.path.join(base_dir, owner, repo, version, asset_name)
+    path = os.path.join(base_dir, owner, repo, version, asset_name)
+    return try_enable_long_paths(path)
 
 
 # ---------------------------------------------------------------------------
@@ -309,6 +310,56 @@ def is_long_path(path: str) -> bool:
     if os.name != "nt":
         return False
     return len(os.path.abspath(path)) > 260
+
+
+# ---------------------------------------------------------------------------
+# Long-path helpers (Windows)
+# ---------------------------------------------------------------------------
+
+MAX_PATH = 260
+
+
+def try_enable_long_paths(path: str) -> str:
+    """Check if *path* exceeds MAX_PATH and try to enable long-path support.
+
+    On Windows, when the absolute form of *path* exceeds 260 characters, a
+    warning is printed to stderr suggesting the use of the ``\\\\?\\``
+    prefix or moving the output to a shorter directory.
+
+    If the path is already prefixed with ``\\\\?\\``, no warning is printed.
+
+    On non-Windows systems this function is a no-op (returns *path*
+    unchanged).
+
+    Args:
+        path: A filesystem path string.
+
+    Returns:
+        The path with ``\\\\?\\`` prefix applied on Windows when the
+        absolute path exceeds MAX_PATH, or the original *path* otherwise.
+    """
+    if os.name != "nt":
+        return path
+
+    abs_path = os.path.abspath(path)
+    if len(abs_path) <= MAX_PATH:
+        return path
+
+    # Already has the extended-length prefix?
+    prefix = "\\\\?\\"
+    if abs_path.startswith(prefix):
+        return path
+
+    print(
+        f"Warning: Path exceeds {MAX_PATH} characters ({len(abs_path)}).\n"
+        + f"  To avoid issues, use a shorter output directory or move\n"
+        + f"  the download folder closer to the drive root (e.g. C:\\dl).",
+        file=sys.stderr,
+    )
+
+    # Return the path with the \\?\ prefix to opt into extended-length
+    # path support on Windows 10 (1607+) and Windows 11.
+    return prefix + abs_path
 
 
 def get_terminal_encoding() -> str:
