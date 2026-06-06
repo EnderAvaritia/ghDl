@@ -299,10 +299,17 @@ export GITHUB_TOKEN="ghp_your_token_here"
 # Windows PowerShell
 $env:GITHUB_TOKEN = "ghp_your_token_here"
 
+# Windows CMD（注意：**不要加引号**）
+set GITHUB_TOKEN=ghp_your_token_here
+
 # 验证环境变量
 echo $GITHUB_TOKEN              # Linux/macOS
 echo $env:GITHUB_TOKEN          # Windows PowerShell
+echo %GITHUB_TOKEN%             # Windows CMD
 ```
+
+> **⚠️ CMD 引号陷阱**：在 CMD 里 `set VAR="value"` 会把双引号也算进值里。
+> 请用 `set VAR=value`（不加引号）。如果不小心加了引号，gh-dl 会自动去除首尾引号。
 
 API 错误 `GitHub API rate limit exceeded` 出现时，设置 Token 即可解决。
 
@@ -351,9 +358,37 @@ tar -czf releases.tar.gz ./archives
 gh-dl 基于 `requests` 库，支持标准环境变量代理：
 
 ```bash
+# Linux / macOS
 export HTTP_PROXY="http://127.0.0.1:7890"
 export HTTPS_PROXY="http://127.0.0.1:7890"
+
+# Windows PowerShell
+$env:HTTP_PROXY = "http://127.0.0.1:7890"
+$env:HTTPS_PROXY = "http://127.0.0.1:7890"
+
+# Windows CMD（注意：**不要加引号**）
+set HTTP_PROXY=http://127.0.0.1:7890
+set HTTPS_PROXY=http://127.0.0.1:7890
+```
+
+> **⚠️ CMD 引号陷阱**：在 CMD 里 `set VAR="value"` 会把双引号也算进值里，导致 `requests`
+> 解析出类似 `'"http'` 的错误代理主机名。CMD 设置环境变量**不要加引号**。
+> PowerShell 和 bash 则需要加引号。
+
+```bash
 gh-dl download owner/repo -p "*.zip"
+```
+
+SOCKS 代理需要额外安装依赖：
+
+```bash
+pip install requests[socks]
+```
+
+```bash
+# PowerShell
+$env:HTTP_PROXY = "socks5://127.0.0.1:1080"
+$env:HTTPS_PROXY = "socks5://127.0.0.1:1080"
 ```
 
 ### 私有仓库
