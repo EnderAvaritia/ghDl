@@ -185,6 +185,10 @@ def _handle_download(args: argparse.Namespace) -> int:
         _print_download_summary(owner, repo, result)
 
     if result.failed > 0:
+        for err in result.errors:
+            err_lower = str(err).lower()
+            if "not found" in err_lower or "404" in err_lower or "rate limit" in err_lower:
+                return 2
         return 1
     return 0
 
@@ -331,7 +335,9 @@ def run_cli(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.subcommand is None:
-        parser.print_help()
+        from gh_downloader.interactive import run_interactive
+
+        run_interactive(output_dir="./downloads")
         return 0
 
     try:

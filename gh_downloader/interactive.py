@@ -11,7 +11,7 @@ from __future__ import annotations
 import shutil
 from typing import NamedTuple
 
-from gh_downloader.api import GitHubError
+from gh_downloader.api import GitHubClient, GitHubError
 from gh_downloader.downloader import DownloadManager, DownloadResult
 from gh_downloader.utils import format_size, format_speed, parse_repo_string
 
@@ -128,7 +128,8 @@ def run_interactive(
     max_workers:
         Maximum number of concurrent download threads.
     """
-    manager = DownloadManager(max_workers=max_workers)
+    client = GitHubClient()
+    manager = DownloadManager(client=client)
 
     # -- Main application loop (restartable via "Download more?") ----------
     while True:
@@ -202,6 +203,7 @@ def run_interactive(
                     output_dir=output_dir,
                     flat=flat,
                     dry_run=dry_run,
+                    max_workers=max_workers,
                     progress_callback=_progress_callback,
                 )
             except GitHubError as exc:
