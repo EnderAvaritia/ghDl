@@ -237,6 +237,9 @@ class GitHubClient:
             On connection refused, DNS failure, timeout, etc.
         RateLimitError
             When GitHub responds with 429 or 403 + zero remaining quota.
+        GitHubError
+            When GitHub responds with 401 (unauthorized) or 403 without
+            rate-limit exhaustion (authentication required).
         """
         try:
             response = self._session.request(method, url, **kwargs)
@@ -247,7 +250,14 @@ class GitHubClient:
         except requests.exceptions.RequestException as e:
             raise NetworkError(f"Request failed: {e}") from e
 
-        # -- Rate-limit detection --
+        # -- Auth / rate-limit detection -----------------------------------
+        if response.status_code == 401:
+            raise GitHubError(
+                "GitHub API requires authentication. "
+                "Set the GITHUB_TOKEN environment variable.\n"
+                "Create a token at: https://github.com/settings/tokens"
+            )
+
         if response.status_code == 429:
             self._raise_rate_limit(response)
 
@@ -255,6 +265,13 @@ class GitHubClient:
             remaining = response.headers.get("X-RateLimit-Remaining")
             if remaining is not None and remaining == "0":
                 self._raise_rate_limit(response)
+            # 403 without rate limit exhaustion = auth required
+            raise GitHubError(
+                "GitHub API returned 403 Forbidden. "
+                "This usually means authentication is required.\n"
+                "Set the GITHUB_TOKEN environment variable.\n"
+                "Create a token at: https://github.com/settings/tokens"
+            )
 
         return response
 
