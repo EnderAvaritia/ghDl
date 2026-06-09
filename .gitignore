@@ -31,3 +31,8 @@ desktop.ini
 
 # Project-specific
 .omo/evidence/
+.gh-dl.json
+downloads/
+tmp/
+*.part
+.coverage
