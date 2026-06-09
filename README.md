@@ -92,6 +92,9 @@ gh-dl download stedolan/jq -p "*.exe"
 # 多个文件类型 + 指定版本 + 自定义输出
 gh-dl download microsoft/vscode -p "*.exe" -p "*.zip" -v 1.85.0 -o ./vscode
 
+# 直接使用 Release URL（自动提取版本号）
+gh-dl download https://github.com/jeessy2/ddns-go/releases/tag/v6.17.0 -p "*.zip"
+
 # 扁平输出，不创建 owner/repo/version 层级
 gh-dl download stedolan/jq -p "*.exe" --flat
 
