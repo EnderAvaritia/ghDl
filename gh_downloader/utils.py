@@ -286,6 +286,54 @@ def parse_repo_string(s: str) -> tuple[str, str]:
     return owner, repo
 
 
+def parse_full_repo_url(s: str) -> tuple[str, str, str | None]:
+    """Extract ``(owner, repo, version)`` from a GitHub repo or release URL.
+
+    Extends :func:`parse_repo_string` with release URL support::
+
+        "https://github.com/owner/repo/releases/tag/v1.2.3"
+            -> ("owner", "repo", "v1.2.3")
+
+        "https://github.com/owner/repo/releases/latest"
+            -> ("owner", "repo", "latest")
+
+        "owner/repo"
+            -> ("owner", "repo", None)
+
+    Args:
+        s: A GitHub repository or release URL string.
+
+    Returns:
+        A ``(owner, repo, version_or_None)`` tuple.
+
+    Raises:
+        ValueError: If the string cannot be parsed.
+    """
+    s = s.strip()
+    if not s:
+        raise ValueError("Empty repository string")
+
+    # Check if this is a full release URL with /releases/ path
+    version: str | None = None
+
+    if "://" in s and "/releases/" in s.lower():
+        # Split on /releases/ to get the version part
+        before, after = s.rsplit("/releases/", 1)
+        # after is like "tag/v6.17.0" or "latest"
+        if after.startswith("tag/"):
+            version = after[4:]  # strip "tag/"
+        else:
+            version = after  # "latest" or other
+
+        # Now parse owner/repo from the part before /releases/
+        owner, repo = parse_repo_string(before)
+        return owner, repo, version
+
+    # Fall back to regular repo parsing (no version in URL)
+    owner, repo = parse_repo_string(s)
+    return owner, repo, None
+
+
 # ---------------------------------------------------------------------------
 # Platform / environment introspection
 # ---------------------------------------------------------------------------

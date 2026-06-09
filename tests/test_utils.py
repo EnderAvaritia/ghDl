@@ -16,6 +16,7 @@ from gh_downloader.utils import (
     format_size,
     format_speed,
     is_long_path,
+    parse_full_repo_url,
     parse_repo_string,
     safe_filename,
     setup_signal_handler,
@@ -227,3 +228,31 @@ class TestSetupSignalHandler:
         assert event is not None
         assert hasattr(event, "is_set")
         assert event.is_set() is False
+
+
+# -- parse_full_repo_url ------------------------------------------------------
+
+
+class TestParseFullRepoUrl:
+    def test_owner_repo_returns_no_version(self):
+        assert parse_full_repo_url("owner/repo") == ("owner", "repo", None)
+
+    def test_release_tag_url(self):
+        assert parse_full_repo_url(
+            "https://github.com/jeessy2/ddns-go/releases/tag/v6.17.0"
+        ) == ("jeessy2", "ddns-go", "v6.17.0")
+
+    def test_release_latest_url(self):
+        assert parse_full_repo_url(
+            "https://github.com/owner/repo/releases/latest"
+        ) == ("owner", "repo", "latest")
+
+    def test_plain_github_url(self):
+        assert parse_full_repo_url(
+            "https://github.com/owner/repo"
+        ) == ("owner", "repo", None)
+
+    def test_trailing_slash(self):
+        assert parse_full_repo_url(
+            "https://github.com/owner/repo/"
+        ) == ("owner", "repo", None)
