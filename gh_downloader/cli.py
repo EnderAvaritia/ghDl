@@ -24,7 +24,7 @@ from gh_downloader.config import (
     load_user_config,
 )
 from gh_downloader.downloader import DownloadManager, DownloadResult
-from gh_downloader.utils import format_size, format_speed, parse_repo_string
+from gh_downloader.utils import format_size, format_speed, parse_full_repo_url
 
 # ---------------------------------------------------------------------------
 # Parser construction
@@ -248,7 +248,8 @@ def _handle_download(args: argparse.Namespace) -> int:
     Returns:
         0 on success, 1 if some downloads failed.
     """
-    owner, repo = parse_repo_string(args.repo)
+    owner, repo, url_version = parse_full_repo_url(args.repo)
+    version = url_version if url_version else args.version
     repo_full = f"{owner}/{repo}"
 
     client = GitHubClient()
@@ -258,7 +259,7 @@ def _handle_download(args: argparse.Namespace) -> int:
     result: DownloadResult = manager.download_release(
         repo=repo_full,
         pattern=args.patterns,
-        version=args.version,
+        version=version,
         output_dir=args.output,
         flat=args.flat,
         dry_run=args.dry_run,
@@ -359,14 +360,15 @@ def _handle_list(args: argparse.Namespace) -> int:
     Returns:
         0 on success.
     """
-    owner, repo = parse_repo_string(args.repo)
+    owner, repo, url_version = parse_full_repo_url(args.repo)
+    version = url_version if url_version else args.version
     repo_full = f"{owner}/{repo}"
 
     client = GitHubClient()
-    release = client.get_release(repo_full, args.version)
+    release = client.get_release(repo_full, version)
     assets = client.get_assets(repo_full, release["id"])
 
-    tag_name = release.get("tag_name", args.version)
+    tag_name = release.get("tag_name", version)
     print(f"Assets for {owner}/{repo} ({tag_name}):")
 
     if not assets:
