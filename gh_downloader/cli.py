@@ -58,10 +58,9 @@ def build_parser() -> argparse.ArgumentParser:
     dl.add_argument(
         "--pattern",
         "-p",
-        required=True,
         action="append",
         dest="patterns",
-        help="Glob pattern to match asset filenames (repeatable, required)",
+        help="Glob pattern to match asset filenames (repeatable; default: download all)",
     )
     dl.add_argument(
         "--version",
@@ -251,6 +250,7 @@ def _handle_download(args: argparse.Namespace) -> int:
     owner, repo, url_version = parse_full_repo_url(args.repo)
     version = url_version if url_version else args.version
     repo_full = f"{owner}/{repo}"
+    patterns = args.patterns if args.patterns is not None else ["*"]
 
     client = GitHubClient()
     manager = DownloadManager(client=client)
@@ -258,7 +258,7 @@ def _handle_download(args: argparse.Namespace) -> int:
 
     result: DownloadResult = manager.download_release(
         repo=repo_full,
-        pattern=args.patterns,
+        pattern=patterns,
         version=version,
         output_dir=args.output,
         flat=args.flat,

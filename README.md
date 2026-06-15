@@ -226,13 +226,13 @@ repos:
 从单个仓库下载资源。
 
 ```
-gh-dl download <repo> -p <pattern> [options]
+gh-dl download <repo> [-p <pattern> ...] [options]
 ```
 
 | 参数                        | 说明                                        |
 |-----------------------------|---------------------------------------------|
 | `repo`                      | 仓库标识，格式 `owner/repo` 或完整 GitHub URL |
-| `--pattern`, `-p`           | 匹配模式（可重复，必填）                    |
+| `--pattern`, `-p`           | 匹配模式（可重复；不指定则下载全部文件）    |
 | `--regex`                   | 将 `--pattern` 解释为正则表达式而非 glob    |
 | `--version`, `-v`           | 版本标签，默认 `latest`                     |
 | `--output`, `-o`            | 输出目录，默认 `./downloads`                |
