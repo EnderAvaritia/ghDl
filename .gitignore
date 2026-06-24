@@ -36,3 +36,6 @@ downloads/
 tmp/
 *.part
 .coverage
+
+# PyInstaller
+*.spec
