@@ -24,6 +24,7 @@ class RepoConfig:
     pattern: str
     version: str = "latest"
     output: str | None = None
+    sources: bool = True
 
 
 @dataclass
@@ -92,7 +93,7 @@ def validate_config(data: dict[str, Any]) -> ConfigData:
     if len(repos_raw) == 0:
         raise ConfigError("No repositories defined")
 
-    known_fields = {"owner", "repo", "pattern", "version", "output"}
+    known_fields = {"owner", "repo", "pattern", "version", "output", "sources"}
     repos: list[RepoConfig] = []
 
     for i, entry in enumerate(repos_raw):
@@ -133,6 +134,10 @@ def validate_config(data: dict[str, Any]) -> ConfigData:
         if output is not None and not isinstance(output, str):
             raise ConfigError(f"repo #{i}: 'output' must be a string")
 
+        sources = entry.get("sources", True)
+        if not isinstance(sources, bool):
+            raise ConfigError(f"repo #{i}: 'sources' must be a boolean")
+
         repos.append(
             RepoConfig(
                 owner=owner.strip(),
@@ -140,6 +145,7 @@ def validate_config(data: dict[str, Any]) -> ConfigData:
                 pattern=pattern.strip(),
                 version=version.strip() if version else "latest",
                 output=output.strip() if output else None,
+                sources=sources,
             )
         )
 
@@ -198,7 +204,8 @@ def create_example_config(path: str) -> None:
             "  repo    - Repository name (required)\n"
             "  pattern - Glob (or regex with --regex) pattern to match asset filenames (required)\n"
             "  version - Release tag or 'latest' (optional, default 'latest')\n"
-            "  output  - Download directory (optional, default: current dir)"
+            "  output  - Download directory (optional, default: current dir)\n"
+            "  sources - Whether to also download source code archives (optional, default true)"
         ),
         "repos": [
             {
@@ -238,6 +245,7 @@ class UserConfig:
     github_token: str | None = None
     http_proxy: str | None = None
     https_proxy: str | None = None
+    download_sources: bool = True
 
 
 def _user_config_paths() -> list[Path]:
@@ -277,6 +285,7 @@ def load_user_config() -> UserConfig:
                     github_token=data.get("github_token"),
                     http_proxy=data.get("http_proxy"),
                     https_proxy=data.get("https_proxy"),
+                    download_sources=data.get("download_sources", True),
                 )
             except (json.JSONDecodeError, OSError):
                 continue
@@ -309,6 +318,7 @@ def create_user_config_example(path: str | None = None) -> str:
         "github_token": "your_github_token_here",
         "http_proxy": "http://127.0.0.1:7890",
         "https_proxy": "http://127.0.0.1:7890",
+        "download_sources": True,
     }
 
     os.makedirs(os.path.dirname(path), exist_ok=True)

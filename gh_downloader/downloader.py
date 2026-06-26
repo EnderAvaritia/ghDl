@@ -104,7 +104,7 @@ class DownloadManager:
         max_workers: int = 4,
         progress_callback: Optional[Callable[[str, int, int, float], None]] = None,
         use_regex: bool = False,
-        sources: bool = False,
+        sources: bool = True,
     ) -> DownloadResult:
         """Download assets matching *pattern* from a release.
 

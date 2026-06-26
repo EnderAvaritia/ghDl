@@ -102,9 +102,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Treat --pattern as regular expressions instead of globs",
     )
     dl.add_argument(
-        "--sources",
-        action="store_true",
-        help="Also download source code archives (zip & tar.gz)",
+        "--no-sources",
+        action="store_false",
+        dest="sources",
+        help="Skip source code archives (zip & tar.gz)",
     )
 
     # -- config -------------------------------------------------------------
@@ -143,9 +144,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Treat patterns as regular expressions instead of globs",
     )
     cfg.add_argument(
-        "--sources",
-        action="store_true",
-        help="Also download source code archives (zip & tar.gz)",
+        "--no-sources",
+        action="store_false",
+        dest="sources",
+        help="Skip source code archives (zip & tar.gz)",
     )
 
     # -- init ---------------------------------------------------------------
@@ -179,9 +181,10 @@ def build_parser() -> argparse.ArgumentParser:
         help='Release version or tag (default: "latest")',
     )
     lst.add_argument(
-        "--sources",
-        action="store_true",
-        help="Also list source code archives (zip & tar.gz)",
+        "--no-sources",
+        action="store_false",
+        dest="sources",
+        help="Hide source code archives from listing",
     )
 
     return parser
@@ -336,7 +339,7 @@ def _handle_config(args: argparse.Namespace) -> int:
                 dry_run=args.dry_run,
                 max_workers=args.concurrent,
                 use_regex=args.regex,
-                sources=args.sources,
+                sources=args.sources if not args.sources else repo_cfg.sources,
                 progress_callback=tracker.update,
             )
 
@@ -388,7 +391,7 @@ def _handle_list(args: argparse.Namespace) -> int:
     tag_name = release.get("tag_name", version)
     print(f"Assets for {owner}/{repo} ({tag_name}):")
 
-    if not assets and not args.sources:
+    if not assets and args.sources is False:
         print("  (no assets)")
         return 0
 
@@ -399,7 +402,7 @@ def _handle_list(args: argparse.Namespace) -> int:
         print(f"  {name:50s} {format_size(size):>10s}")
         print(f"  {'→':>2s} {url}")
 
-    if args.sources:
+    if args.sources is not False:
         for key, label in (("zipball_url", "Source code (zip)"), ("tarball_url", "Source code (tar.gz)")):
             url = release.get(key)
             if url:
@@ -467,6 +470,9 @@ def run_cli(argv: list[str] | None = None) -> int:
         os.environ["HTTPS_PROXY"] = user_cfg.https_proxy
 
     parser = build_parser()
+    # Override sources default from user config (if explicitly set to False)
+    if not user_cfg.download_sources:
+        parser.set_defaults(sources=False)
     args = parser.parse_args(argv)
 
     if args.subcommand is None:
