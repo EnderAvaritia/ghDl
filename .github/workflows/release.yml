@@ -61,12 +61,11 @@ jobs:
           name: exe-dist
           path: dist/gh-dl.exe
 
-  # ── Create / update GitHub Release ───────────────────────────────────
+  # ── Upload to GitHub Release ─────────────────────────────────────────
   release:
     name: Upload to GitHub Release
     needs: [build-whl, build-exe]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
     steps:
       - name: Download wheel artifacts
         uses: actions/download-artifact@v4
@@ -80,10 +79,25 @@ jobs:
           name: exe-dist
           path: exe-dist
 
-      - name: Upload release assets
-        uses: softprops/action-gh-release@v2
+      - name: Set release tag
+        shell: bash
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "tag=${{ github.ref_name }}" >> $GITHUB_ENV
+          else
+            echo "tag=continuous" >> $GITHUB_ENV
+          fi
+
+      - name: Create / update release
+        uses: ncipollo/release-action@v1
         with:
-          files: |
+          tag: ${{ env.tag }}
+          name: ${{ env.tag == 'continuous' && format('Continuous Build ({0})', github.sha) || format('Release {0}', env.tag) }}
+          allowUpdates: true
+          omitBodyDuringUpdate: true
+          replacesArtifacts: true
+          makeLatest: ${{ env.tag == 'continuous' && 'legacy' || 'true' }}
+          artifacts: |
             whl-dist/*.whl
             whl-dist/*.tar.gz
             exe-dist/gh-dl.exe
