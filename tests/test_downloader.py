@@ -138,3 +138,37 @@ class TestDownloadReleaseDryRun:
         assert result.downloaded == 0
         assert result.total == 3
         assert before == after  # no files created
+
+    def test_dry_run_with_sources_includes_source_archives(
+        self, mock_api_client, sample_release_response,
+        sample_assets_response, temp_output_dir,
+    ):
+        """Verify sources=True adds zipball and tarball to the matched list."""
+        repo = "stedolan/jq"
+
+        release_url = (
+            f"https://api.github.com/repos/{repo}/releases/latest"
+        )
+        assets_url = (
+            f"https://api.github.com/repos/{repo}/releases/123/assets"
+        )
+        mock_api_client._mock_registry[release_url] = (
+            200, sample_release_response
+        )
+        mock_api_client._mock_registry[assets_url] = (
+            200, sample_assets_response
+        )
+
+        mgr = DownloadManager(mock_api_client)
+
+        result = mgr.download_release(
+            repo=repo,
+            pattern=["*"],
+            output_dir=temp_output_dir,
+            dry_run=True,
+            sources=True,
+        )
+
+        # 3 original assets + 2 source archives
+        assert result.total == 5
+        assert result.downloaded == 0

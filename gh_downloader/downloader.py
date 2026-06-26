@@ -104,6 +104,7 @@ class DownloadManager:
         max_workers: int = 4,
         progress_callback: Optional[Callable[[str, int, int, float], None]] = None,
         use_regex: bool = False,
+        sources: bool = False,
     ) -> DownloadResult:
         """Download assets matching *pattern* from a release.
 
@@ -136,6 +137,9 @@ class DownloadManager:
             If ``True``, interpret *pattern* as regular expressions instead of
             glob patterns.  Matching uses :func:`re.search` (match anywhere in
             the asset name).
+        sources:
+            If ``True``, also download the source code archives (zip & tar.gz)
+            that GitHub provides for the release, in addition to matched assets.
 
         Returns
         -------
@@ -165,10 +169,23 @@ class DownloadManager:
 
         # -- Glob matching --------------------------------------------------
         matched = self.match_assets(assets, patterns, use_regex=use_regex)
-        result.total = len(matched)
 
-        if not matched:
-            return result
+        # -- Source code archives (injected after pattern matching) ----------
+        if sources:
+            tag_name = release.get("tag_name", version)
+            for key, filename in (
+                ("zipball_url", f"{repo_name}-{tag_name}.zip"),
+                ("tarball_url", f"{repo_name}-{tag_name}.tar.gz"),
+            ):
+                url = release.get(key)
+                if url:
+                    matched.append({
+                        "name": filename,
+                        "size": 0,
+                        "browser_download_url": url,
+                    })
+
+        result.total = len(matched)
 
         # -- Dry-run: just print & return -----------------------------------
         if dry_run:
