@@ -37,6 +37,8 @@ def sample_release_response() -> dict:
         "author": {"login": "stedolan", "id": 1},
         "assets": [],
         "body": "Release notes...",
+        "zipball_url": "https://api.github.com/repos/stedolan/jq/zipball/jq-1.6",
+        "tarball_url": "https://api.github.com/repos/stedolan/jq/tarball/jq-1.6",
     }
 
 

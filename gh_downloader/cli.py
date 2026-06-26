@@ -101,6 +101,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Treat --pattern as regular expressions instead of globs",
     )
+    dl.add_argument(
+        "--sources",
+        action="store_true",
+        help="Also download source code archives (zip & tar.gz)",
+    )
 
     # -- config -------------------------------------------------------------
     cfg = subparsers.add_parser(
@@ -137,6 +142,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Treat patterns as regular expressions instead of globs",
     )
+    cfg.add_argument(
+        "--sources",
+        action="store_true",
+        help="Also download source code archives (zip & tar.gz)",
+    )
 
     # -- init ---------------------------------------------------------------
     init = subparsers.add_parser(
@@ -167,6 +177,11 @@ def build_parser() -> argparse.ArgumentParser:
         "-v",
         default="latest",
         help='Release version or tag (default: "latest")',
+    )
+    lst.add_argument(
+        "--sources",
+        action="store_true",
+        help="Also list source code archives (zip & tar.gz)",
     )
 
     return parser
@@ -266,6 +281,7 @@ def _handle_download(args: argparse.Namespace) -> int:
         no_cache=args.no_cache,
         max_workers=args.concurrent,
         use_regex=args.regex,
+        sources=args.sources,
         progress_callback=tracker.update,
     )
 
@@ -312,16 +328,17 @@ def _handle_config(args: argparse.Namespace) -> int:
         tracker = ProgressTracker()
 
         result: DownloadResult = manager.download_release(
-            repo=repo_full,
-            pattern=repo_cfg.pattern,
-            version=repo_cfg.version,
-            output_dir=output_dir,
-            flat=args.flat,
-            dry_run=args.dry_run,
-            max_workers=args.concurrent,
-            use_regex=args.regex,
-            progress_callback=tracker.update,
-        )
+                repo=repo_full,
+                pattern=repo_cfg.pattern,
+                version=repo_cfg.version,
+                output_dir=output_dir,
+                flat=args.flat,
+                dry_run=args.dry_run,
+                max_workers=args.concurrent,
+                use_regex=args.regex,
+                sources=args.sources,
+                progress_callback=tracker.update,
+            )
 
         if args.dry_run:
             _print_dry_run_summary(repo_cfg.owner, repo_cfg.repo, result)
@@ -371,7 +388,7 @@ def _handle_list(args: argparse.Namespace) -> int:
     tag_name = release.get("tag_name", version)
     print(f"Assets for {owner}/{repo} ({tag_name}):")
 
-    if not assets:
+    if not assets and not args.sources:
         print("  (no assets)")
         return 0
 
@@ -381,6 +398,13 @@ def _handle_list(args: argparse.Namespace) -> int:
         url = GitHubClient.get_asset_download_url(asset)
         print(f"  {name:50s} {format_size(size):>10s}")
         print(f"  {'→':>2s} {url}")
+
+    if args.sources:
+        for key, label in (("zipball_url", "Source code (zip)"), ("tarball_url", "Source code (tar.gz)")):
+            url = release.get(key)
+            if url:
+                print(f"  {label:50s}       (auto)")
+                print(f"  {'→':>2s} {url}")
 
     return 0
 
