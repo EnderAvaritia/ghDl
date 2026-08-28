@@ -39,7 +39,10 @@ def build_parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(
         prog="gh-dl",
-        description="Batch GitHub Release downloader.",
+        description=(
+            "Batch GitHub Release downloader. "
+            "gh-dl <owner/repo> is a shortcut for gh-dl download <owner/repo>."
+        ),
     )
     parser.add_argument(
         "--version",
@@ -443,6 +446,31 @@ def _print_dry_run_summary(owner: str, repo: str, result: DownloadResult) -> Non
 # Top-level dispatch
 # ---------------------------------------------------------------------------
 
+_SUBCOMMANDS = ("download", "config", "init", "list")
+
+
+def _coerce_implicit_download(argv: list[str]) -> list[str]:
+    """Default to the ``download`` subcommand when the first argument is a repo.
+
+    Allows ``gh-dl stedolan/jq`` to be typed instead of
+    ``gh-dl download stedolan/jq``. The first argument is treated as an
+    implicit repository -- and ``download`` prepended -- only when it
+    contains a ``/`` separator (which every ``owner/repo`` string and
+    GitHub URL has) and is neither a known subcommand nor an option flag.
+
+    Args:
+        argv: Raw argument list (must already be materialised, not None).
+
+    Returns:
+        The argument list with ``download`` prepended when applicable.
+    """
+    if not argv:
+        return argv
+    first = argv[0]
+    if first in _SUBCOMMANDS or first.startswith("-") or "/" not in first:
+        return argv
+    return ["download", *argv]
+
 
 def run_cli(argv: list[str] | None = None) -> int:
     """Parse CLI arguments, dispatch to the appropriate subcommand handler.
@@ -473,7 +501,8 @@ def run_cli(argv: list[str] | None = None) -> int:
     # Override sources default from user config (if explicitly set to False)
     if not user_cfg.download_sources:
         parser.set_defaults(sources=False)
-    args = parser.parse_args(argv)
+    arg_list = sys.argv[1:] if argv is None else list(argv)
+    args = parser.parse_args(_coerce_implicit_download(arg_list))
 
     if args.subcommand is None:
         from gh_downloader.interactive import run_interactive
