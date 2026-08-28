@@ -75,11 +75,17 @@ gh-dl --version    # 输出: gh-dl 0.1.0
 gh-dl list neovim/neovim
 
 # 下载所有 .zip 文件，保存到 ./nvim
-gh-dl download neovim/neovim -p "*.zip" -o ./nvim
+# 注意：download 子命令可以省略，直接写仓库即可
+gh-dl neovim/neovim -p "*.zip" -o ./nvim
 
 # 模拟运行，不实际写入
-gh-dl download neovim/neovim -p "*.zip" --dry-run
+gh-dl neovim/neovim -p "*.zip" --dry-run
 ```
+
+> **省略 download**：只要第一个参数是仓库（`owner/repo` 或完整 GitHub URL），
+> `gh-dl <repo>` 就等价于 `gh-dl download <repo>`。例如
+> `gh-dl stedolan/jq -p "*.exe"` 与 `gh-dl download stedolan/jq -p "*.exe"` 完全一致。
+> 其他子命令（`list`、`config`、`init`）仍然显式写出，不带任何参数仍是交互模式。
 
 ## 使用模式
 
@@ -141,7 +147,8 @@ gh-dl config repos.json --dry-run
 
 ### 3. 交互式模式：引导式下载
 
-不带参数直接运行，按提示输入仓库、模式和版本，适合临时或一次性使用。
+**不带任何参数**直接运行，按提示输入仓库、模式和版本，适合临时或一次性使用。
+（只要带了仓库参数，就会直接下载，不会进入交互模式。）
 
 ```bash
 gh-dl
@@ -223,10 +230,12 @@ repos:
 
 ### download 子命令
 
-从单个仓库下载资源。
+从单个仓库下载资源。**download 是默认子命令，可以省略**——
+第一个参数直接写仓库即可：
 
 ```
 gh-dl download <repo> [-p <pattern> ...] [options]
+gh-dl <repo> [-p <pattern> ...] [options]      # 等价简写
 ```
 
 | 参数                        | 说明                                        |

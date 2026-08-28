@@ -9,7 +9,11 @@ import sys
 
 import pytest
 
-from gh_downloader.cli import build_parser, run_cli
+from gh_downloader.cli import (
+    _coerce_implicit_download,
+    build_parser,
+    run_cli,
+)
 
 
 class TestBuildParser:
@@ -49,3 +53,51 @@ class TestRunCli:
         with pytest.raises(SystemExit) as exc:
             build_parser().parse_args(["--help"])
         assert exc.value.code == 0
+
+
+class TestImplicitDownload:
+    def test_coerce_prepends_download_for_repo(self):
+        assert _coerce_implicit_download(["stedolan/jq", "-p", "*.exe"]) == [
+            "download",
+            "stedolan/jq",
+            "-p",
+            "*.exe",
+        ]
+
+    def test_coerce_handles_full_url(self):
+        url = "https://github.com/stedolan/jq/releases/tag/jq-1.8.1"
+        assert _coerce_implicit_download([url]) == ["download", url]
+
+    def test_coerce_leaves_known_subcommands_alone(self):
+        for first in ("download", "config", "init", "list"):
+            argv = [first, "x"]
+            assert _coerce_implicit_download(argv) == argv
+
+    def test_coerce_leaves_flags_and_empty_alone(self):
+        assert _coerce_implicit_download([]) == []
+        assert _coerce_implicit_download(["--version"]) == ["--version"]
+        assert _coerce_implicit_download(["-o", "dir"]) == ["-o", "dir"]
+
+    def test_coerce_ignores_single_word(self):
+        assert _coerce_implicit_download(["jq"]) == ["jq"]
+
+    def test_repo_first_routes_to_download_handler(self, monkeypatch):
+        captured: dict[str, object] = {}
+
+        def fake_handle(args: argparse.Namespace) -> int:
+            captured["repo"] = args.repo
+            captured["patterns"] = args.patterns
+            return 0
+
+        monkeypatch.setattr("gh_downloader.cli._handle_download", fake_handle)
+        assert run_cli(["stedolan/jq", "-p", "*.exe"]) == 0
+        assert captured["repo"] == "stedolan/jq"
+        assert captured["patterns"] == ["*.exe"]
+
+    def test_single_word_is_not_implicit_download(self):
+        with pytest.raises(SystemExit):
+            run_cli(["jq"])
+
+    def test_bare_command_still_interactive(self, monkeypatch):
+        monkeypatch.setattr("builtins.input", lambda _: "n")
+        assert run_cli([]) == 0
