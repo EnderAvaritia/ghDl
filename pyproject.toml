@@ -25,6 +25,7 @@ dev = [
 
 [project.scripts]
 gh-dl = "gh_downloader.__main__:main"
+ghdl = "gh_downloader.__main__:main"
 
 [tool.setuptools.packages.find]
 include = ["gh_downloader*"]

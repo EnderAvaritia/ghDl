@@ -68,6 +68,10 @@ pip install -e .
 gh-dl --version    # 输出: gh-dl 0.1.0
 ```
 
+> **命令别名**：`gh-dl` 和 `ghdl` 完全等价，两条命令指向同一个程序，按习惯任选其一即可。
+> 例如 `ghdl neovim/neovim -p "*.zip"` 与 `gh-dl neovim/neovim -p "*.zip"` 效果相同。
+> PyInstaller 打包（`pyinstaller gh-dl.spec`）也会同时产出 `gh-dl.exe` 和 `ghdl.exe`。
+
 ## 快速上手
 
 ```bash
