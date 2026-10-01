@@ -83,25 +83,41 @@ def _confirm(prompt_text: str, default: bool = True) -> bool:
     return answer.lower().startswith("y")
 
 
-def _progress_callback(name: str, current: int, total: int, speed: float) -> None:
-    """Print a single progress line for one asset being downloaded.
+# ---------------------------------------------------------------------------
+# Progress display (thread-safe, tracks total assets and completed count)
+# ---------------------------------------------------------------------------
 
-    Parameters
-    ----------
-    name:
-        Asset filename (e.g. ``foo.exe``).
-    current:
-        Bytes downloaded so far.
-    total:
-        Total bytes of the asset.
-    speed:
-        Transfer rate in bytes/second.
+
+class _ProgressTracker:
+    """Callable progress tracker for interactive mode.
+
+    Prints a progress line for each chunk update, with a ``[completed/total]``
+    prefix when the total number of assets to download is known.
     """
-    pct = current / total * 100 if total > 0 else 0.0
-    print(
-        f"  {name}: {pct:.0f}% ({format_size(current)}/{format_size(total)})"
-        + f" {format_speed(speed)}"
-    )
+
+    def __init__(self) -> None:
+        self._finished: set[str] = set()
+        self.total_assets = 0
+
+    def set_total_assets(self, total: int) -> None:
+        self.total_assets = total
+
+    def __call__(self, name: str, current: int, total: int, speed: float) -> None:
+        completed = len(self._finished)
+        prefix = f"[{completed}/{self.total_assets}] " if self.total_assets > 0 else ""
+        pct = current / total * 100 if total > 0 else 0.0
+
+        if current >= total > 0 and name not in self._finished:
+            self._finished.add(name)
+            print(
+                f"  {prefix}{name}: 100% ({format_size(total)}/{format_size(total)})"
+                f" {format_speed(speed)}"
+            )
+        else:
+            print(
+                f"  {prefix}{name}: {pct:.0f}% ({format_size(current)}/{format_size(total)})"
+                f" {format_speed(speed)}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -201,6 +217,7 @@ def run_interactive(
             print(f"Processing {label} ...")
 
             try:
+                tracker = _ProgressTracker()
                 result = manager.download_release(
                     repo=f"{entry.owner}/{entry.repo}",
                     pattern=entry.pattern,
@@ -210,7 +227,8 @@ def run_interactive(
                     dry_run=dry_run,
                     max_workers=max_workers,
                     use_regex=entry.use_regex,
-                    progress_callback=_progress_callback,
+                    progress_callback=tracker,
+                    on_total_known=tracker.set_total_assets,
                 )
             except GitHubError as exc:
                 print(f"  {label} API error: {exc}")
