@@ -210,6 +210,14 @@ class ProgressTracker:
         self._lock = threading.Lock()
         self._finished: set[str] = set()
         self._shown_first = False
+        self.total_assets = 0
+
+    @property
+    def completed_count(self) -> int:
+        return len(self._finished)
+
+    def set_total_assets(self, total: int) -> None:
+        self.total_assets = total
 
     def update(self, name: str, current: int, total: int, speed: float) -> None:
         """Called by the downloader for every chunk received."""
@@ -225,10 +233,16 @@ class ProgressTracker:
 
             self._print_progress(name, current, total, speed)
 
+    def _counter_prefix(self) -> str:
+        if self.total_assets > 0:
+            return f"[{self.completed_count}/{self.total_assets}] "
+        return ""
+
     def _print_progress(self, name: str, current: int, total: int, speed: float) -> None:
         """Print a single-line progress bar (overwrites with \\r)."""
+        prefix = self._counter_prefix()
         if total <= 0:
-            print(f"  {name}: [?]\r", end="", flush=True)
+            print(f"  {prefix}{name}: [?]\r", end="", flush=True)
             return
 
         pct = current / total
@@ -240,7 +254,7 @@ class ProgressTracker:
         total_str = format_size(total)
         speed_str = format_speed(speed)
         print(
-            f"  {name}: [{bar}] {pct_display:>3}%"
+            f"  {prefix}{name}: [{bar}] {pct_display:>3}%"
             f" {current_str}/{total_str} {speed_str}\r",
             end="",
             flush=True,
@@ -248,11 +262,12 @@ class ProgressTracker:
 
     def _print_completion(self, name: str, total: int, speed: float) -> None:
         """Print a permanent completion line."""
+        prefix = self._counter_prefix()
         total_str = format_size(total)
         speed_str = format_speed(speed)
         bar = "#" * 20
         print(
-            f"  {name}: [{bar}] 100%"
+            f"  {prefix}{name}: [{bar}] 100%"
             f" {total_str}/{total_str} {speed_str}"
         )
 
@@ -289,6 +304,7 @@ def _handle_download(args: argparse.Namespace) -> int:
         use_regex=args.regex,
         sources=args.sources,
         progress_callback=tracker.update,
+        on_total_known=tracker.set_total_assets,
     )
 
     # Print summary
@@ -344,6 +360,7 @@ def _handle_config(args: argparse.Namespace) -> int:
                 use_regex=args.regex,
                 sources=args.sources if not args.sources else repo_cfg.sources,
                 progress_callback=tracker.update,
+                on_total_known=tracker.set_total_assets,
             )
 
         if args.dry_run:

@@ -105,6 +105,7 @@ class DownloadManager:
         progress_callback: Optional[Callable[[str, int, int, float], None]] = None,
         use_regex: bool = False,
         sources: bool = True,
+        on_total_known: Optional[Callable[[int], None]] = None,
     ) -> DownloadResult:
         """Download assets matching *pattern* from a release.
 
@@ -186,6 +187,9 @@ class DownloadManager:
                     })
 
         result.total = len(matched)
+
+        if on_total_known:
+            on_total_known(result.total)
 
         # -- Dry-run: just print & return -----------------------------------
         if dry_run:
