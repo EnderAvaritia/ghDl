@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import sys
 import threading
+import time
 
 from gh_downloader import __version__
 from gh_downloader.api import GitHubClient, GitHubError
@@ -211,6 +213,10 @@ class ProgressTracker:
         self._finished: set[str] = set()
         self._shown_first = False
         self.total_assets = 0
+        self._term_width = shutil.get_terminal_size().columns
+        self._skipped: list[str] = []
+        self._last_print_time = 0.0
+        self._min_interval = 0.1  # 100ms throttle between screen writes
 
     @property
     def completed_count(self) -> int:
@@ -218,6 +224,11 @@ class ProgressTracker:
 
     def set_total_assets(self, total: int) -> None:
         self.total_assets = total
+
+    def skip(self, name: str) -> None:
+        """Record one asset as skipped (cached on disk)."""
+        with self._lock:
+            self._skipped.append(name)
 
     def update(self, name: str, current: int, total: int, speed: float) -> None:
         """Called by the downloader for every chunk received."""
@@ -230,19 +241,25 @@ class ProgressTracker:
             if not self._shown_first:
                 print()  # blank line before first progress
                 self._shown_first = True
+                self._last_print_time = 0.0  # force first progress write
 
-            self._print_progress(name, current, total, speed)
+            now = time.time()
+            if now - self._last_print_time >= self._min_interval:
+                self._last_print_time = now
+                self._print_progress(name, current, total, speed)
 
     def _counter_prefix(self) -> str:
         if self.total_assets > 0:
-            return f"[{self.completed_count}/{self.total_assets}] "
+            done = self.completed_count + len(self._skipped)
+            return f"[{done}/{self.total_assets}] "
         return ""
 
     def _print_progress(self, name: str, current: int, total: int, speed: float) -> None:
         """Print a single-line progress bar (overwrites with \\r)."""
         prefix = self._counter_prefix()
         if total <= 0:
-            print(f"  {prefix}{name}: [?]\r", end="", flush=True)
+            line = f"  {prefix}{name}: [?]"
+            print(f"{line:<{self._term_width}}\r", end="", flush=True)
             return
 
         pct = current / total
@@ -253,12 +270,11 @@ class ProgressTracker:
         current_str = format_size(current)
         total_str = format_size(total)
         speed_str = format_speed(speed)
-        print(
+        line = (
             f"  {prefix}{name}: [{bar}] {pct_display:>3}%"
-            f" {current_str}/{total_str} {speed_str}\r",
-            end="",
-            flush=True,
+            f" {current_str}/{total_str} {speed_str}"
         )
+        print(f"{line:<{self._term_width}}\r", end="", flush=True)
 
     def _print_completion(self, name: str, total: int, speed: float) -> None:
         """Print a permanent completion line."""
@@ -266,10 +282,11 @@ class ProgressTracker:
         total_str = format_size(total)
         speed_str = format_speed(speed)
         bar = "#" * 20
-        print(
+        line = (
             f"  {prefix}{name}: [{bar}] 100%"
             f" {total_str}/{total_str} {speed_str}"
         )
+        print(f"{line:<{self._term_width}}")
 
 
 # ---------------------------------------------------------------------------
@@ -305,6 +322,7 @@ def _handle_download(args: argparse.Namespace) -> int:
         sources=args.sources,
         progress_callback=tracker.update,
         on_total_known=tracker.set_total_assets,
+        skip_callback=tracker.skip,
     )
 
     # Print summary
@@ -334,6 +352,7 @@ def _handle_config(args: argparse.Namespace) -> int:
 
     total_downloaded = 0
     total_failed = 0
+    total_skipped = 0
 
     for repo_cfg in config.repos:
         output_dir = args.output or repo_cfg.output or "./downloads"
@@ -361,6 +380,7 @@ def _handle_config(args: argparse.Namespace) -> int:
                 sources=args.sources if not args.sources else repo_cfg.sources,
                 progress_callback=tracker.update,
                 on_total_known=tracker.set_total_assets,
+                skip_callback=tracker.skip,
             )
 
         if args.dry_run:
@@ -370,8 +390,9 @@ def _handle_config(args: argparse.Namespace) -> int:
 
         total_downloaded += result.downloaded
         total_failed += result.failed
+        total_skipped = total_skipped + result.skipped
 
-    print(f"Summary: {total_downloaded} downloaded, {total_failed} failed")
+    print(f"Summary: {total_downloaded} downloaded, {total_skipped} cached, {total_failed} failed")
 
     if total_failed > 0:
         return 1
@@ -441,15 +462,25 @@ def _print_download_summary(owner: str, repo: str, result: DownloadResult) -> No
     """Print a human-readable download summary line."""
     label = f"{owner}/{repo}"
     good = result.downloaded
+    skipped = result.skipped
     bad = result.failed
     total = result.total
 
-    if bad:
-        print(f"  [{label}] {good}/{total} assets downloaded, {bad} failed")
-    elif total == 0:
+    if total == 0:
         print(f"  [{label}] No matching assets found")
-    else:
-        print(f"  [{label}] {good}/{total} assets downloaded successfully")
+        return
+
+    parts = []
+    if good:
+        parts.append(f"{good} downloaded")
+    if skipped:
+        parts.append(f"{skipped} cached")
+    if bad:
+        parts.append(f"{bad} failed")
+    if not parts:
+        parts.append("0 downloaded")
+
+    print(f"  [{label}] {', '.join(parts)}, {total} total")
 
 
 def _print_dry_run_summary(owner: str, repo: str, result: DownloadResult) -> None:
