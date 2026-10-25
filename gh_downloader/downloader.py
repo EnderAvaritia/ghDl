@@ -106,6 +106,7 @@ class DownloadManager:
         use_regex: bool = False,
         sources: bool = True,
         on_total_known: Optional[Callable[[int], None]] = None,
+        skip_callback: Optional[Callable[[str], None]] = None,
     ) -> DownloadResult:
         """Download assets matching *pattern* from a release.
 
@@ -141,6 +142,9 @@ class DownloadManager:
         sources:
             If ``True``, also download the source code archives (zip & tar.gz)
             that GitHub provides for the release, in addition to matched assets.
+        skip_callback:
+            Optional callback invoked with the asset name when an asset is
+            skipped because it already exists in the cache.
 
         Returns
         -------
@@ -225,6 +229,9 @@ class DownloadManager:
                 asset_size = asset.get("size", 0)
                 if not no_cache and self.check_cache(dest_path, asset_size):
                     result.skipped += 1
+                    name = asset["name"]
+                    if skip_callback:
+                        skip_callback(name)
                     continue
 
                 # ---- Ensure parent directory exists -----------------------

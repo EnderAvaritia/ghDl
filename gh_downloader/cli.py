@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import shutil
 import sys
 import threading
 import time
@@ -26,7 +25,14 @@ from gh_downloader.config import (
     load_user_config,
 )
 from gh_downloader.downloader import DownloadManager, DownloadResult
-from gh_downloader.utils import format_size, format_speed, parse_full_repo_url
+from gh_downloader.utils import (
+    display_width,
+    fit_line,
+    format_size,
+    format_speed,
+    parse_full_repo_url,
+    terminal_width,
+)
 
 # ---------------------------------------------------------------------------
 # Parser construction
@@ -213,10 +219,10 @@ class ProgressTracker:
         self._finished: set[str] = set()
         self._shown_first = False
         self.total_assets = 0
-        self._term_width = shutil.get_terminal_size().columns
         self._skipped: list[str] = []
         self._last_print_time = 0.0
         self._min_interval = 0.1  # 100ms throttle between screen writes
+        self._is_tty = sys.stdout.isatty()
 
     @property
     def completed_count(self) -> int:
@@ -238,6 +244,10 @@ class ProgressTracker:
                 self._print_completion(name, total, speed)
                 return
 
+            if not self._is_tty:
+                # Redirected output: emit only the permanent completion lines.
+                return
+
             if not self._shown_first:
                 print()  # blank line before first progress
                 self._shown_first = True
@@ -255,38 +265,50 @@ class ProgressTracker:
         return ""
 
     def _print_progress(self, name: str, current: int, total: int, speed: float) -> None:
-        """Print a single-line progress bar (overwrites with \\r)."""
-        prefix = self._counter_prefix()
-        if total <= 0:
-            line = f"  {prefix}{name}: [?]"
-            print(f"{line:<{self._term_width}}\r", end="", flush=True)
-            return
+        """Draw a single-line progress bar that overwrites itself with ``\\r``.
 
-        pct = current / total
-        bar_width = 20
-        filled = int(bar_width * pct)
-        bar = "#" * filled + "-" * (bar_width - filled)
-        pct_display = f"{pct * 100:.0f}"
-        current_str = format_size(current)
-        total_str = format_size(total)
-        speed_str = format_speed(speed)
-        line = (
-            f"  {prefix}{name}: [{bar}] {pct_display:>3}%"
-            f" {current_str}/{total_str} {speed_str}"
-        )
-        print(f"{line:<{self._term_width}}\r", end="", flush=True)
+        The rendered line is truncated to one column less than the terminal
+        width so it can never wrap to a second row.  Wrapping would leave the
+        overflow on screen and make every update scroll the terminal.
+        """
+        width = terminal_width() - 1
+        prefix = f"  {self._counter_prefix()}"
+
+        if total <= 0:
+            line = fit_line(prefix, name, ": [?]", width)
+        else:
+            pct = current / total
+            bar_width = 20
+            filled = int(bar_width * pct)
+            bar = "#" * filled + "-" * (bar_width - filled)
+            pct_display = f"{pct * 100:.0f}"
+            suffix = (
+                f": [{bar}] {pct_display:>3}%"
+                f" {format_size(current)}/{format_size(total)}"
+                f" {format_speed(speed)}"
+            )
+            line = fit_line(prefix, name, suffix, width)
+
+        padded = line + " " * max(0, width - display_width(line))
+        sys.stdout.write("\r" + padded)
+        sys.stdout.flush()
 
     def _print_completion(self, name: str, total: int, speed: float) -> None:
         """Print a permanent completion line."""
-        prefix = self._counter_prefix()
-        total_str = format_size(total)
-        speed_str = format_speed(speed)
+        prefix = f"  {self._counter_prefix()}"
         bar = "#" * 20
-        line = (
-            f"  {prefix}{name}: [{bar}] 100%"
-            f" {total_str}/{total_str} {speed_str}"
-        )
-        print(f"{line:<{self._term_width}}")
+        total_str = format_size(total)
+        suffix = f": [{bar}] 100% {total_str}/{total_str} {format_speed(speed)}"
+        line = f"{prefix}{name}{suffix}"
+
+        if self._is_tty:
+            width = terminal_width() - 1
+            line = fit_line(prefix, name, suffix, width)
+            # Erase the in-place progress line before printing the final one.
+            sys.stdout.write("\r" + " " * width + "\r")
+            sys.stdout.flush()
+
+        print(line)
 
 
 # ---------------------------------------------------------------------------

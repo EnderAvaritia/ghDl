@@ -12,7 +12,9 @@ import pytest
 from gh_downloader.utils import (
     build_output_path,
     check_disk_space,
+    display_width,
     ensure_dir,
+    fit_line,
     format_size,
     format_speed,
     is_long_path,
@@ -20,6 +22,8 @@ from gh_downloader.utils import (
     parse_repo_string,
     safe_filename,
     setup_signal_handler,
+    terminal_width,
+    truncate_to_width,
 )
 
 
@@ -256,3 +260,69 @@ class TestParseFullRepoUrl:
         assert parse_full_repo_url(
             "https://github.com/owner/repo/"
         ) == ("owner", "repo", None)
+
+
+# -- display_width / truncate_to_width / fit_line ---------------------------
+
+
+class TestDisplayWidth:
+    def test_empty_string(self):
+        assert display_width("") == 0
+
+    def test_ascii(self):
+        assert display_width("abc") == 3
+
+    def test_cjk_characters_are_double_width(self):
+        assert display_width("下载") == 4
+
+    def test_combining_mark_has_zero_width(self):
+        assert display_width("e\u0301") == 1
+
+
+class TestTruncateToWidth:
+    def test_short_text_is_unchanged(self):
+        assert truncate_to_width("hello", 10) == "hello"
+
+    def test_long_text_ends_with_ellipsis_within_budget(self):
+        result = truncate_to_width("a" * 100, 20)
+        assert result.endswith("...")
+        assert display_width(result) <= 20
+
+    def test_cjk_text_never_exceeds_budget(self):
+        result = truncate_to_width("下载" * 50, 21)
+        assert display_width(result) <= 21
+
+    def test_zero_width_returns_empty(self):
+        assert truncate_to_width("hello", 0) == ""
+
+    def test_budget_smaller_than_ellipsis(self):
+        result = truncate_to_width("hello", 2)
+        assert display_width(result) <= 2
+
+
+class TestFitLine:
+    def test_short_line_is_unchanged(self):
+        assert fit_line("  ", "file.zip", ": 100%", 40) == "  file.zip: 100%"
+
+    def test_long_name_is_truncated_but_suffix_survives(self):
+        line = fit_line("  ", "x" * 200, ": 100% 1.00 MB/s", 40)
+        assert display_width(line) <= 40
+        assert line.startswith("  ")
+        assert line.endswith(": 100% 1.00 MB/s")
+        assert "..." in line
+
+    def test_cjk_name_never_exceeds_budget(self):
+        line = fit_line("  ", "下载" * 100, ": 50%", 40)
+        assert display_width(line) <= 40
+
+    def test_narrow_width_falls_back_to_hard_cut(self):
+        line = fit_line("prefix", "body", "suffix", 5)
+        assert display_width(line) <= 5
+
+    def test_zero_width_returns_empty(self):
+        assert fit_line("a", "b", "c", 0) == ""
+
+
+class TestTerminalWidth:
+    def test_returns_at_least_minimum(self):
+        assert terminal_width() >= 20

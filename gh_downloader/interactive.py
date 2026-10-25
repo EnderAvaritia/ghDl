@@ -9,11 +9,21 @@ downloads without typing CLI flags.  Uses only the Python standard library
 from __future__ import annotations
 
 import shutil
+import sys
+import threading
+import time
 from typing import NamedTuple
 
 from gh_downloader.api import GitHubClient, GitHubError
 from gh_downloader.downloader import DownloadManager, DownloadResult
-from gh_downloader.utils import format_size, format_speed, parse_repo_string
+from gh_downloader.utils import (
+    display_width,
+    fit_line,
+    format_size,
+    format_speed,
+    parse_repo_string,
+    terminal_width,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -91,33 +101,93 @@ def _confirm(prompt_text: str, default: bool = True) -> bool:
 class _ProgressTracker:
     """Callable progress tracker for interactive mode.
 
-    Prints a progress line for each chunk update, with a ``[completed/total]``
-    prefix when the total number of assets to download is known.
+    Redraws a single line (``\\r``) while a file is downloading and prints a
+    permanent line once it completes, with a ``[completed/total]`` prefix when
+    the total number of assets is known.  The line is truncated to the
+    terminal width so long asset names cannot wrap and flood the screen.
     """
 
     def __init__(self) -> None:
+        self._lock = threading.Lock()
         self._finished: set[str] = set()
         self.total_assets = 0
+        self._skipped: list[str] = []
+        self._shown_first = False
+        self._last_print_time = 0.0
+        self._min_interval = 0.1  # 100ms throttle between screen writes
+        self._is_tty = sys.stdout.isatty()
 
     def set_total_assets(self, total: int) -> None:
         self.total_assets = total
 
-    def __call__(self, name: str, current: int, total: int, speed: float) -> None:
-        completed = len(self._finished)
-        prefix = f"[{completed}/{self.total_assets}] " if self.total_assets > 0 else ""
-        pct = current / total * 100 if total > 0 else 0.0
+    def skip(self, name: str) -> None:
+        """Record one asset as skipped (cached on disk)."""
+        with self._lock:
+            self._skipped.append(name)
 
-        if current >= total > 0 and name not in self._finished:
-            self._finished.add(name)
-            print(
-                f"  {prefix}{name}: 100% ({format_size(total)}/{format_size(total)})"
-                f" {format_speed(speed)}"
-            )
+    def __call__(self, name: str, current: int, total: int, speed: float) -> None:
+        with self._lock:
+            if current >= total > 0 and name not in self._finished:
+                self._finished.add(name)
+                self._print_completion(name, total, speed)
+                return
+
+            if not self._is_tty:
+                # Redirected output: emit only the permanent completion lines.
+                return
+
+            if not self._shown_first:
+                # The "Processing ..." header already ended with a newline, so
+                # start drawing in place on the next row.
+                self._shown_first = True
+                self._last_print_time = 0.0  # force first progress write
+
+            now = time.time()
+            if now - self._last_print_time >= self._min_interval:
+                self._last_print_time = now
+                self._print_progress(name, current, total, speed)
+
+    def _counter_prefix(self) -> str:
+        if self.total_assets > 0:
+            done = len(self._finished) + len(self._skipped)
+            return f"[{done}/{self.total_assets}] "
+        return ""
+
+    def _print_progress(self, name: str, current: int, total: int, speed: float) -> None:
+        width = terminal_width() - 1
+        prefix = f"  {self._counter_prefix()}"
+
+        if total <= 0:
+            suffix = ": [?]"
         else:
-            print(
-                f"  {prefix}{name}: {pct:.0f}% ({format_size(current)}/{format_size(total)})"
+            pct = current / total * 100
+            suffix = (
+                f": {pct:.0f}%"
+                f" ({format_size(current)}/{format_size(total)})"
                 f" {format_speed(speed)}"
             )
+
+        line = fit_line(prefix, name, suffix, width)
+        padded = line + " " * max(0, width - display_width(line))
+        sys.stdout.write("\r" + padded)
+        sys.stdout.flush()
+
+    def _print_completion(self, name: str, total: int, speed: float) -> None:
+        prefix = f"  {self._counter_prefix()}"
+        suffix = (
+            f": 100% ({format_size(total)}/{format_size(total)})"
+            f" {format_speed(speed)}"
+        )
+        line = f"{prefix}{name}{suffix}"
+
+        if self._is_tty:
+            width = terminal_width() - 1
+            line = fit_line(prefix, name, suffix, width)
+            # Erase the in-place progress line before printing the final one.
+            sys.stdout.write("\r" + " " * width + "\r")
+            sys.stdout.flush()
+
+        print(line)
 
 
 # ---------------------------------------------------------------------------
@@ -229,6 +299,7 @@ def run_interactive(
                     use_regex=entry.use_regex,
                     progress_callback=tracker,
                     on_total_known=tracker.set_total_assets,
+                    skip_callback=tracker.skip,
                 )
             except GitHubError as exc:
                 print(f"  {label} API error: {exc}")

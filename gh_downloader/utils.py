@@ -11,6 +11,115 @@ import shutil
 import signal
 import sys
 import threading
+import unicodedata
+
+
+# ---------------------------------------------------------------------------
+# Terminal display helpers
+# ---------------------------------------------------------------------------
+
+
+def _char_width(char: str) -> int:
+    """Return the number of terminal columns occupied by *char*."""
+    if unicodedata.combining(char) or unicodedata.category(char) in ("Cc", "Cf"):
+        return 0
+    return 2 if unicodedata.east_asian_width(char) in ("F", "W") else 1
+
+
+def display_width(text: str) -> int:
+    """Return the number of terminal columns needed to display *text*.
+
+    East-Asian wide/fullwidth characters count as two columns, combining
+    marks and control characters as zero.  This is an approximation (it does
+    not implement the Unicode grapheme-cluster algorithm), but it is accurate
+    enough for progress lines containing ASCII and CJK text.
+
+    Args:
+        text: The text to measure.
+
+    Returns:
+        Display width in terminal columns.
+    """
+    return sum(_char_width(char) for char in text)
+
+
+def truncate_to_width(text: str, max_width: int, ellipsis: str = "...") -> str:
+    """Truncate *text* so its :func:`display_width` does not exceed *max_width*.
+
+    If truncation is needed the result ends with *ellipsis*.  When even the
+    ellipsis does not fit, a hard cut without ellipsis is returned.
+
+    Args:
+        text: The text to truncate.
+        max_width: Maximum display width in terminal columns.
+        ellipsis: Marker appended to truncated text (default ``"..."``).
+
+    Returns:
+        The original text when it fits, otherwise a width-limited prefix.
+    """
+    if max_width <= 0:
+        return ""
+    if display_width(text) <= max_width:
+        return text
+
+    ellipsis_width = display_width(ellipsis)
+    if ellipsis_width >= max_width:
+        return _take_width(text, max_width)
+    return _take_width(text, max_width - ellipsis_width) + ellipsis
+
+
+def _take_width(text: str, max_width: int) -> str:
+    """Return the longest prefix of *text* fitting within *max_width*."""
+    result: list[str] = []
+    used = 0
+    for char in text:
+        char_width = _char_width(char)
+        if used + char_width > max_width:
+            break
+        result.append(char)
+        used += char_width
+    return "".join(result)
+
+
+def fit_line(prefix: str, text: str, suffix: str, max_width: int) -> str:
+    """Fit ``prefix + text + suffix`` into *max_width* display columns.
+
+    *text* (typically a file name) is the only part that gets truncated, so
+    important trailing information such as percentage, size and speed is
+    preserved even when the name is very long.
+
+    Args:
+        prefix: Fixed leading text.
+        text: Variable-length middle text.
+        suffix: Fixed trailing text.
+        max_width: Maximum display width in terminal columns.
+
+    Returns:
+        A line whose display width is at most *max_width*.
+    """
+    if max_width <= 0:
+        return ""
+    budget = max_width - display_width(prefix) - display_width(suffix)
+    if budget >= len("..."):
+        return prefix + truncate_to_width(text, budget) + suffix
+    return truncate_to_width(prefix + text + suffix, max_width)
+
+
+def terminal_width(minimum: int = 20) -> int:
+    """Return the current terminal width in columns, with a sane floor.
+
+    Falls back to the default size (80 columns) when stdout is not a
+    terminal.  ``minimum`` avoids degenerate layouts on tiny/zero-width
+    terminals.
+
+    Args:
+        minimum: Smallest width to return (default 20).
+
+    Returns:
+        Terminal width in columns.
+    """
+    columns = shutil.get_terminal_size().columns
+    return max(columns, minimum)
 
 
 # ---------------------------------------------------------------------------
