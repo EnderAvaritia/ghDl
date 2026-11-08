@@ -14,8 +14,10 @@ import threading
 import time
 from typing import NamedTuple
 
-from gh_downloader.api import GitHubClient, GitHubError
+from gh_downloader.api import GitHubError
+from gh_downloader.config import load_user_config
 from gh_downloader.downloader import DownloadManager, DownloadResult
+from gh_downloader.providers import create_client
 from gh_downloader.utils import (
     display_width,
     fit_line,
@@ -39,6 +41,7 @@ class _RepoEntry(NamedTuple):
     pattern: str
     version: str
     use_regex: bool
+    repo_input: str
 
 
 # ---------------------------------------------------------------------------
@@ -215,8 +218,7 @@ def run_interactive(
     max_workers:
         Maximum number of concurrent download threads.
     """
-    client = GitHubClient()
-    manager = DownloadManager(client=client)
+    user_cfg = load_user_config()
 
     # -- Main application loop (restartable via "Download more?") ----------
     while True:
@@ -233,7 +235,9 @@ def run_interactive(
 
             # Parse the repo string; on failure ask again.
             try:
-                owner, repo = parse_repo_string(repo_str)
+                owner, repo = parse_repo_string(
+                    repo_str, gitlab_url=user_cfg.gitlab_url
+                )
             except ValueError as exc:
                 print(f"  [error] {exc}")
                 continue
@@ -251,7 +255,9 @@ def run_interactive(
             use_regex_str = _prompt("  Use regex? (y/N): ", default="n")
             use_regex = use_regex_str.lower().startswith("y")
 
-            queue.append(_RepoEntry(owner, repo, pattern, version, use_regex))
+            queue.append(
+                _RepoEntry(owner, repo, pattern, version, use_regex, repo_str)
+            )
             # Estimate: we don't know until we call the API, so we just show
             # the raw count.
             mode = "regex" if use_regex else "glob"
@@ -287,6 +293,13 @@ def run_interactive(
             print(f"Processing {label} ...")
 
             try:
+                client = create_client(
+                    entry.repo_input,
+                    gitlab_url=user_cfg.gitlab_url,
+                    github_api_url=user_cfg.github_api_url,
+                    user_config=user_cfg,
+                )
+                manager = DownloadManager(client=client)
                 tracker = _ProgressTracker()
                 result = manager.download_release(
                     repo=f"{entry.owner}/{entry.repo}",

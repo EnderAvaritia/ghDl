@@ -1,6 +1,6 @@
-# gh-dl: 批量 GitHub Release 下载工具
+# gh-dl: 批量 GitHub / GitLab Release 下载工具
 
-gh-dl 是一个命令行工具，用于从 GitHub Release 页面批量下载资源文件。它支持 glob 或正则表达式文件筛选、并发下载、智能缓存（跳过已下载的相同文件）、断点续传和三种操作模式。你无需手动点击页面，一条命令即可批量获取任意仓库的发布包。
+gh-dl 是一个命令行工具，用于从 GitHub 或 GitLab 的 Release 页面批量下载资源文件。它支持 glob 或正则表达式文件筛选、并发下载、智能缓存（跳过已下载的相同文件）、断点续传和三种操作模式。你无需手动点击页面，一条命令即可批量获取任意仓库的发布包。
 
 - [用法一览](#用法一览)
 - [功能特性](#功能特性)
@@ -51,7 +51,8 @@ Done: 3 downloaded, 0 cached, 0 errors
 - 版本选择：支持最新版（`latest`）或指定标签版本
 - 扁平输出：可选择不创建 `owner/repo/version` 层级目录
 - 模拟运行：`--dry-run` 预览将下载的文件，不实际写入
-- 认证支持：通过 `GITHUB_TOKEN` 环境变量或 `.gh-dl.json` 配置文件提升 API 限频配额
+- 认证支持：通过 `GITHUB_TOKEN` / `GITLAB_TOKEN` 环境变量或 `.gh-dl.json` 配置文件提升 API 限频配额
+- 多平台支持：GitHub 与 GitLab（含自建 GitLab、嵌套 group 命名空间）
 - 持久配置：Token 和代理设置写入文件，无需每次终端重复设置
 
 ## 安装
@@ -160,6 +161,69 @@ gh-dl
 
 交互过程将逐一询问仓库、模式和版本，完成后确认即开始下载。
 
+## GitLab 支持
+
+gh-dl 支持 GitLab.com 和自建 GitLab 实例，GitHub 用法完全不变。
+
+```bash
+# GitLab.com：下载最新 Release 中的 zip 资源
+gh-dl https://gitlab.com/group/project -p "*.zip"
+
+# 嵌套 group 命名空间
+gh-dl https://gitlab.com/group/sub/project -p "*.zip"
+
+# 指定 Release 版本（GitLab 使用 /-/releases/ 路径）
+gh-dl https://gitlab.com/group/project/-/releases/v1.2.3 -p "*.zip"
+
+# 最新版本（permalink 形式）
+gh-dl list https://gitlab.com/group/project/-/releases/permalink/latest
+
+# 自建 GitLab（API 基址为 <url>/api/v4）
+gh-dl download https://gitlab.example.com/team/project -p "*.zip" \
+  --gitlab-url https://gitlab.example.com
+
+# 也可以显式指定提供方
+gh-dl download group/project -p "*.zip" \
+  --provider gitlab --gitlab-url https://gitlab.example.com
+```
+
+GitLab 认证使用个人访问令牌（Personal Access Token），通过 `PRIVATE-TOKEN`
+请求头发送。可设置环境变量 `GITLAB_TOKEN`，或在用户配置文件中写入
+`gitlab_token`。访问私有项目时 Token 必须具备 `read_api` / `read_repository`
+等相应权限。
+
+```bash
+# Linux / macOS
+export GITLAB_TOKEN="glpat-xxxxxxxxxxxx"
+
+# Windows PowerShell
+$env:GITLAB_TOKEN = "glpat-xxxxxxxxxxxx"
+```
+
+GitLab Release 的源码包（`assets.sources`，如 zip / tar.gz / tar.bz2 / tar）
+以及 Release asset links（`assets.links`）都会被识别并下载。需要注意的是，
+GitLab 的 asset link 不返回文件大小，因此基于大小的缓存校验会退化为
+“文件存在即视为已缓存”。若需要强制重新下载，请使用 `--no-cache`。
+
+可用选项：
+
+| 选项                | 说明                                                        |
+|---------------------|-------------------------------------------------------------|
+| `--provider`        | 显式指定 `github` 或 `gitlab`（默认根据 URL 自动判断）      |
+| `--gitlab-url`      | 自建 GitLab 的站点地址（默认 `https://gitlab.com`）         |
+| `--github-api-url`  | GitHub API 基址，例如 GitHub Enterprise（默认官方 API）     |
+
+用户配置文件 `.gh-dl.json` 还支持以下键：
+
+```json
+{
+  "github_token": "ghp_your_token_here",
+  "github_api_url": "https://api.github.com",
+  "gitlab_token": "glpat_your_token_here",
+  "gitlab_url": "https://gitlab.com"
+}
+```
+
 ## 配置文件格式
 
 ### JSON
@@ -222,6 +286,8 @@ repos:
 | `pattern` | 是   | string | -          | Glob 模式，如 `*.exe`、`*linux*` |
 | `version` | 否   | string | `latest`   | Release 标签                     |
 | `output`  | 否   | string | 当前目录   | 下载输出路径                     |
+| `sources` | 否   | bool   | `true`     | 是否同时下载源码包               |
+| `provider`| 否   | string | 自动判断   | `github` 或 `gitlab`             |
 
 ## CLI 参考
 
@@ -253,6 +319,9 @@ gh-dl <repo> [-p <pattern> ...] [options]      # 等价简写
 | `--dry-run`                 | 模拟运行，不实际写入文件                    |
 | `--concurrent`, `-j`        | 并发下载数，默认 4                          |
 | `--no-cache`                | 跳过缓存，强制重新下载                      |
+| `--provider`                | `github` 或 `gitlab`（默认自动判断）        |
+| `--gitlab-url`              | 自建 GitLab 站点地址                        |
+| `--github-api-url`          | GitHub API 基址（如 GitHub Enterprise）     |
 
 ### config 子命令
 
@@ -270,6 +339,9 @@ gh-dl config <config_file> [options]
 | `--dry-run`                 | 模拟运行                                    |
 | `--concurrent`, `-j`        | 并发下载数，默认 4                          |
 | `--regex`                   | 将 `--pattern` 解释为正则表达式而非 glob    |
+| `--provider`                | `github` 或 `gitlab`（默认自动判断）        |
+| `--gitlab-url`              | 自建 GitLab 站点地址                        |
+| `--github-api-url`          | GitHub API 基址（如 GitHub Enterprise）     |
 
 ### init 子命令
 
@@ -326,8 +398,11 @@ gh-dl list <repo> [options]
 
 | 参数                  | 说明                                |
 |-----------------------|-------------------------------------|
-| `repo`                | 仓库标识，格式 `owner/repo` 或完整 URL |
+| `repo`                | 仓库标识，格式 `owner/repo` 或完整 GitHub/GitLab URL |
 | `--version`, `-v`     | 版本标签，默认 `latest`             |
+| `--provider`          | `github` 或 `gitlab`（默认自动判断） |
+| `--gitlab-url`        | 自建 GitLab 站点地址                |
+| `--github-api-url`    | GitHub API 基址（如 GitHub Enterprise） |
 
 ## 退出码
 

@@ -25,6 +25,7 @@ from gh_downloader.config import (
     load_user_config,
 )
 from gh_downloader.downloader import DownloadManager, DownloadResult
+from gh_downloader.providers import GitLabClient, create_client
 from gh_downloader.utils import (
     display_width,
     fit_line,
@@ -39,6 +40,26 @@ from gh_downloader.utils import (
 # ---------------------------------------------------------------------------
 
 
+def _add_provider_options(p: argparse.ArgumentParser) -> None:
+    """Add shared provider-selection options to a subparser."""
+    p.add_argument(
+        "--provider",
+        choices=("github", "gitlab"),
+        default=None,
+        help="Release provider (default: auto-detect from URL; github)",
+    )
+    p.add_argument(
+        "--gitlab-url",
+        default=None,
+        help="GitLab base URL for self-hosted instances (default: https://gitlab.com)",
+    )
+    p.add_argument(
+        "--github-api-url",
+        default=None,
+        help="GitHub API base URL, e.g. GitHub Enterprise (default: https://api.github.com)",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Construct and return the top-level argument parser with all subcommands.
 
@@ -48,7 +69,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="gh-dl",
         description=(
-            "Batch GitHub Release downloader. "
+            "Batch GitHub/GitLab Release downloader. "
             "gh-dl <owner/repo> is a shortcut for gh-dl download <owner/repo>."
         ),
     )
@@ -64,7 +85,7 @@ def build_parser() -> argparse.ArgumentParser:
     dl = subparsers.add_parser("download", help="Download assets from a single repository")
     dl.add_argument(
         "repo",
-        help='Repository (owner/repo or full GitHub URL, e.g. "stedolan/jq")',
+        help='Repository (owner/repo or full GitHub/GitLab URL, e.g. "stedolan/jq")',
     )
     dl.add_argument(
         "--pattern",
@@ -116,8 +137,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-sources",
         action="store_false",
         dest="sources",
-        help="Skip source code archives (zip & tar.gz)",
+        help="Skip source code archives",
     )
+    _add_provider_options(dl)
 
     # -- config -------------------------------------------------------------
     cfg = subparsers.add_parser(
@@ -158,8 +180,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-sources",
         action="store_false",
         dest="sources",
-        help="Skip source code archives (zip & tar.gz)",
+        help="Skip source code archives",
     )
+    _add_provider_options(cfg)
 
     # -- init ---------------------------------------------------------------
     init = subparsers.add_parser(
@@ -183,7 +206,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     lst.add_argument(
         "repo",
-        help='Repository (owner/repo or full GitHub URL)',
+        help='Repository (owner/repo or full GitHub/GitLab URL)',
     )
     lst.add_argument(
         "--version",
@@ -197,6 +220,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="sources",
         help="Hide source code archives from listing",
     )
+    _add_provider_options(lst)
 
     return parser
 
@@ -315,6 +339,17 @@ class ProgressTracker:
 # Subcommand handlers
 # ---------------------------------------------------------------------------
 
+# Tracks which provider handled the last API call, so top-level errors can be
+# labelled "GitLab" without changing GitHub's existing message.
+_ACTIVE_PROVIDER = "github"
+_USER_CONFIG = None
+
+
+def _set_active_provider(client: object) -> None:
+    """Record the provider of *client* for error-message labelling."""
+    global _ACTIVE_PROVIDER
+    _ACTIVE_PROVIDER = "gitlab" if isinstance(client, GitLabClient) else "github"
+
 
 def _handle_download(args: argparse.Namespace) -> int:
     """Execute the ``download`` subcommand.
@@ -322,12 +357,25 @@ def _handle_download(args: argparse.Namespace) -> int:
     Returns:
         0 on success, 1 if some downloads failed.
     """
-    owner, repo, url_version = parse_full_repo_url(args.repo)
+    provider = getattr(args, "provider", None)
+    gitlab_url = getattr(args, "gitlab_url", None)
+    github_api_url = getattr(args, "github_api_url", None)
+
+    owner, repo, url_version = parse_full_repo_url(
+        args.repo, provider=provider, gitlab_url=gitlab_url
+    )
     version = url_version if url_version else args.version
     repo_full = f"{owner}/{repo}"
     patterns = args.patterns if args.patterns is not None else ["*"]
 
-    client = GitHubClient()
+    client = create_client(
+        args.repo,
+        provider=provider,
+        gitlab_url=gitlab_url,
+        github_api_url=github_api_url,
+        user_config=_USER_CONFIG,
+    )
+    _set_active_provider(client)
     manager = DownloadManager(client=client)
     tracker = ProgressTracker()
 
@@ -376,6 +424,10 @@ def _handle_config(args: argparse.Namespace) -> int:
     total_failed = 0
     total_skipped = 0
 
+    cli_provider = getattr(args, "provider", None)
+    cli_gitlab_url = getattr(args, "gitlab_url", None)
+    cli_github_api_url = getattr(args, "github_api_url", None)
+
     for repo_cfg in config.repos:
         output_dir = args.output or repo_cfg.output or "./downloads"
         repo_full = f"{repo_cfg.owner}/{repo_cfg.repo}"
@@ -386,7 +438,15 @@ def _handle_config(args: argparse.Namespace) -> int:
         else:
             print(f"[{label}] Downloading...")
 
-        client = GitHubClient()
+        provider = repo_cfg.provider or cli_provider
+        client = create_client(
+            repo_full,
+            provider=provider,
+            gitlab_url=cli_gitlab_url,
+            github_api_url=cli_github_api_url,
+            user_config=_USER_CONFIG,
+        )
+        _set_active_provider(client)
         manager = DownloadManager(client=client)
         tracker = ProgressTracker()
 
@@ -443,11 +503,24 @@ def _handle_list(args: argparse.Namespace) -> int:
     Returns:
         0 on success.
     """
-    owner, repo, url_version = parse_full_repo_url(args.repo)
+    provider = getattr(args, "provider", None)
+    gitlab_url = getattr(args, "gitlab_url", None)
+    github_api_url = getattr(args, "github_api_url", None)
+
+    owner, repo, url_version = parse_full_repo_url(
+        args.repo, provider=provider, gitlab_url=gitlab_url
+    )
     version = url_version if url_version else args.version
     repo_full = f"{owner}/{repo}"
 
-    client = GitHubClient()
+    client = create_client(
+        args.repo,
+        provider=provider,
+        gitlab_url=gitlab_url,
+        github_api_url=github_api_url,
+        user_config=_USER_CONFIG,
+    )
+    _set_active_provider(client)
     release = client.get_release(repo_full, version)
     assets = client.get_assets(repo_full, release["id"])
 
@@ -466,11 +539,21 @@ def _handle_list(args: argparse.Namespace) -> int:
         print(f"  {'→':>2s} {url}")
 
     if args.sources is not False:
-        for key, label in (("zipball_url", "Source code (zip)"), ("tarball_url", "Source code (tar.gz)")):
-            url = release.get(key)
-            if url:
-                print(f"  {label:50s}       (auto)")
+        release_sources = release.get("sources")
+        if isinstance(release_sources, list) and release_sources:
+            for src in release_sources:
+                url = src.get("url")
+                if not url:
+                    continue
+                src_name = src.get("name") or url.rsplit("/", 1)[-1]
+                print(f"  {src_name:50s}       (auto)")
                 print(f"  {'→':>2s} {url}")
+        else:
+            for key, label in (("zipball_url", "Source code (zip)"), ("tarball_url", "Source code (tar.gz)")):
+                url = release.get(key)
+                if url:
+                    print(f"  {label:50s}       (auto)")
+                    print(f"  {'→':>2s} {url}")
 
     return 0
 
@@ -558,10 +641,16 @@ def run_cli(argv: list[str] | None = None) -> int:
         - ``1``: partial failure (some downloads failed).
         - ``2``: fatal error (bad config, API error, missing file, interrupt).
     """
+    global _USER_CONFIG, _ACTIVE_PROVIDER
+
     # Apply persistent user config before anything else
     user_cfg = load_user_config()
+    _USER_CONFIG = user_cfg
+    _ACTIVE_PROVIDER = "github"
     if user_cfg.github_token and "GITHUB_TOKEN" not in os.environ:
         os.environ["GITHUB_TOKEN"] = user_cfg.github_token
+    if user_cfg.gitlab_token and "GITLAB_TOKEN" not in os.environ:
+        os.environ["GITLAB_TOKEN"] = user_cfg.gitlab_token
     if user_cfg.http_proxy and "HTTP_PROXY" not in os.environ:
         os.environ["HTTP_PROXY"] = user_cfg.http_proxy
     if user_cfg.https_proxy and "HTTPS_PROXY" not in os.environ:
@@ -597,7 +686,8 @@ def run_cli(argv: list[str] | None = None) -> int:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 2
     except GitHubError as exc:
-        print(f"GitHub API error: {exc}", file=sys.stderr)
+        label = "GitLab" if _ACTIVE_PROVIDER == "gitlab" else "GitHub"
+        print(f"{label} API error: {exc}", file=sys.stderr)
         return 2
     except FileNotFoundError as exc:
         print(f"File not found: {exc}", file=sys.stderr)

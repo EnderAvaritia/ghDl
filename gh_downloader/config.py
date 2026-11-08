@@ -25,6 +25,7 @@ class RepoConfig:
     version: str = "latest"
     output: str | None = None
     sources: bool = True
+    provider: str | None = None
 
 
 @dataclass
@@ -93,7 +94,9 @@ def validate_config(data: dict[str, Any]) -> ConfigData:
     if len(repos_raw) == 0:
         raise ConfigError("No repositories defined")
 
-    known_fields = {"owner", "repo", "pattern", "version", "output", "sources"}
+    known_fields = {
+        "owner", "repo", "pattern", "version", "output", "sources", "provider",
+    }
     repos: list[RepoConfig] = []
 
     for i, entry in enumerate(repos_raw):
@@ -138,6 +141,18 @@ def validate_config(data: dict[str, Any]) -> ConfigData:
         if not isinstance(sources, bool):
             raise ConfigError(f"repo #{i}: 'sources' must be a boolean")
 
+        provider = entry.get("provider")
+        if provider is not None:
+            if not isinstance(provider, str):
+                raise ConfigError(
+                    f"repo #{i}: 'provider' must be 'github' or 'gitlab'"
+                )
+            provider = provider.strip().lower()
+            if provider not in ("github", "gitlab"):
+                raise ConfigError(
+                    f"repo #{i}: 'provider' must be 'github' or 'gitlab'"
+                )
+
         repos.append(
             RepoConfig(
                 owner=owner.strip(),
@@ -146,6 +161,7 @@ def validate_config(data: dict[str, Any]) -> ConfigData:
                 version=version.strip() if version else "latest",
                 output=output.strip() if output else None,
                 sources=sources,
+                provider=provider,
             )
         )
 
@@ -205,7 +221,8 @@ def create_example_config(path: str) -> None:
             "  pattern - Glob (or regex with --regex) pattern to match asset filenames (required)\n"
             "  version - Release tag or 'latest' (optional, default 'latest')\n"
             "  output  - Download directory (optional, default: current dir)\n"
-            "  sources - Whether to also download source code archives (optional, default true)"
+            "  sources - Whether to also download source code archives (optional, default true)\n"
+            "  provider - Release provider: 'github' or 'gitlab' (optional, auto-detect)"
         ),
         "repos": [
             {
@@ -246,6 +263,9 @@ class UserConfig:
     http_proxy: str | None = None
     https_proxy: str | None = None
     download_sources: bool = True
+    gitlab_token: str | None = None
+    gitlab_url: str | None = None
+    github_api_url: str | None = None
 
 
 def _user_config_paths() -> list[Path]:
@@ -286,6 +306,9 @@ def load_user_config() -> UserConfig:
                     http_proxy=data.get("http_proxy"),
                     https_proxy=data.get("https_proxy"),
                     download_sources=data.get("download_sources", True),
+                    gitlab_token=data.get("gitlab_token"),
+                    gitlab_url=data.get("gitlab_url"),
+                    github_api_url=data.get("github_api_url"),
                 )
             except (json.JSONDecodeError, OSError):
                 continue
@@ -319,6 +342,9 @@ def create_user_config_example(path: str | None = None) -> str:
         "http_proxy": "http://127.0.0.1:7890",
         "https_proxy": "http://127.0.0.1:7890",
         "download_sources": True,
+        "gitlab_token": "your_gitlab_token_here",
+        "gitlab_url": "https://gitlab.com",
+        "github_api_url": "https://api.github.com",
     }
 
     os.makedirs(os.path.dirname(path), exist_ok=True)

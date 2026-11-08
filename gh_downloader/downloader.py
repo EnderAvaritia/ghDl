@@ -18,7 +18,7 @@ from typing import Any, Callable, Optional, Union
 
 import requests
 
-from gh_downloader.api import GitHubClient, GitHubError, NetworkError
+from gh_downloader.api import GitHubError, NetworkError
 from gh_downloader.utils import (
     build_output_path,
     ensure_dir,
@@ -78,16 +78,16 @@ class DownloadManager:
     """Coordinates concurrent downloads of GitHub release assets.
 
     Uses a ``ThreadPoolExecutor`` for concurrency, ``fnmatch`` for glob
-    matching, and the ``GitHubClient`` for all HTTP interactions.
+    matching, and a provider client (GitHub or GitLab) for HTTP interactions.
 
     Parameters
     ----------
     client:
-        An authenticated (or anonymous) :class:`GitHubClient` instance.
+        An authenticated (or anonymous) release provider client.
     """
 
-    def __init__(self, client: GitHubClient) -> None:
-        self._client: GitHubClient = client
+    def __init__(self, client: Any) -> None:
+        self._client: Any = client
         self._stop_event: threading.Event = threading.Event()
 
     # -- Public API ---------------------------------------------------------
@@ -113,7 +113,8 @@ class DownloadManager:
         Parameters
         ----------
         repo:
-            ``"owner/name"`` identifying the GitHub repository.
+            ``"owner/name"`` identifying the repository (for GitLab this may
+            be a nested ``"group/sub/name"`` path).
         pattern:
             One or more patterns (``fnmatch`` glob or regex syntax).  Assets whose
             ``name`` matches **any** of the patterns will be downloaded.
@@ -177,18 +178,31 @@ class DownloadManager:
 
         # -- Source code archives (injected after pattern matching) ----------
         if sources:
-            tag_name = release.get("tag_name", version)
-            for key, filename in (
-                ("zipball_url", f"{repo_name}-{tag_name}.zip"),
-                ("tarball_url", f"{repo_name}-{tag_name}.tar.gz"),
-            ):
-                url = release.get(key)
-                if url:
-                    matched.append({
-                        "name": filename,
-                        "size": 0,
-                        "browser_download_url": url,
-                    })
+            release_sources = release.get("sources")
+            if isinstance(release_sources, list) and release_sources:
+                # GitLab-style normalized sources (zip/tar.gz/tar.bz2/tar).
+                for src in release_sources:
+                    url = src.get("url")
+                    if url:
+                        matched.append({
+                            "name": src.get("name") or url.rsplit("/", 1)[-1],
+                            "size": 0,
+                            "browser_download_url": url,
+                        })
+            else:
+                # GitHub-style zipball/tarball archives.
+                tag_name = release.get("tag_name", version)
+                for key, filename in (
+                    ("zipball_url", f"{repo_name}-{tag_name}.zip"),
+                    ("tarball_url", f"{repo_name}-{tag_name}.tar.gz"),
+                ):
+                    url = release.get(key)
+                    if url:
+                        matched.append({
+                            "name": filename,
+                            "size": 0,
+                            "browser_download_url": url,
+                        })
 
         result.total = len(matched)
 
@@ -397,7 +411,7 @@ class DownloadManager:
         Parameters
         ----------
         assets:
-            Asset dicts returned by :meth:`GitHubClient.get_assets`.
+            Asset dicts returned by the provider's ``get_assets`` method.
         patterns:
             Glob or regex patterns (e.g. ``["*.exe", ".*\\.exe$"]``).
             An empty list or ``["*"]`` returns all assets unchanged.
@@ -489,9 +503,16 @@ class DownloadManager:
 
         start_time = time.time()
 
-        # Perform the HTTP request via the client's session (reuses auth &
-        # connection pooling).
-        response = self._client._session.get(url, stream=True, headers=headers)
+        # Perform the HTTP request via the client.  Providers expose
+        # ``open_download`` so they can scope auth headers safely; fall back
+        # to the raw session for plain/custom clients.
+        open_download = getattr(self._client, "open_download", None)
+        if open_download is not None:
+            response = open_download(url, headers)
+        else:  # backwards compatibility with plain/custom clients
+            response = self._client._session.get(
+                url, stream=True, headers=headers
+            )
         response.raise_for_status()
 
         # Determine total transfer size

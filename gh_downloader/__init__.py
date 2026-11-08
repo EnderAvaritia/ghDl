@@ -1,7 +1,7 @@
 """
-gh-downloader - A batch GitHub Release downloader tool.
+gh-downloader - A batch GitHub/GitLab Release downloader tool.
 
-Download multiple release assets from GitHub repositories
+Download multiple release assets from GitHub or GitLab repositories
 efficiently via CLI or interactive mode.
 """
 

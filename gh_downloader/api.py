@@ -227,6 +227,14 @@ class GitHubClient:
 
         return dest_path
 
+    def open_download(
+        self,
+        url: str,
+        headers: dict[str, str] | None = None,
+    ) -> requests.Response:
+        """Return a streaming response for *url*, reusing the authenticated session."""
+        return self._session.get(url, stream=True, headers=dict(headers or {}))
+
     # -- Internal request helpers ------------------------------------------
 
     def _request(self, method: str, url: str, **kwargs: Any) -> requests.Response:

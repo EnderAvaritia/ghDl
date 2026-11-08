@@ -12,7 +12,7 @@ import signal
 import sys
 import threading
 import unicodedata
-
+import urllib.parse
 
 # ---------------------------------------------------------------------------
 # Terminal display helpers
@@ -322,10 +322,42 @@ def setup_signal_handler() -> threading.Event:
 # Repository string parsing
 # ---------------------------------------------------------------------------
 
-def parse_repo_string(s: str) -> tuple[str, str]:
-    """Extract ``(owner, repo)`` from a GitHub repository string.
+def _detect_provider_from_host(host: str, gitlab_url: str | None) -> str:
+    """Infer ``"github"`` or ``"gitlab"`` from a URL *host*.
 
-    Accepted input formats::
+    This duplicates the tiny host rule from
+    :func:`gh_downloader.providers.resolve_provider` on purpose: importing
+    the providers package here would create a circular import, and this
+    module is intentionally dependency-free.
+    """
+    try:
+        host = (urllib.parse.urlsplit("//" + host).hostname or host).lower()
+    except ValueError:
+        host = host.lower()
+    if host in ("github.com", "www.github.com", "api.github.com"):
+        return "github"
+    if "github" in host:
+        return "github"
+    if host == "gitlab.com" or "gitlab" in host:
+        return "gitlab"
+    if gitlab_url:
+        try:
+            gitlab_host = (urllib.parse.urlsplit(gitlab_url).hostname or "").lower()
+        except ValueError:
+            gitlab_host = ""
+        if gitlab_host and gitlab_host == host:
+            return "gitlab"
+    return "github"
+
+
+def parse_repo_string(
+    s: str,
+    provider: str | None = None,
+    gitlab_url: str | None = None,
+) -> tuple[str, str]:
+    """Extract ``(namespace, repo)`` from a GitHub or GitLab repository string.
+
+    Accepted GitHub input formats::
 
         "owner/repo"
         "https://github.com/owner/repo"
@@ -333,44 +365,77 @@ def parse_repo_string(s: str) -> tuple[str, str]:
         "http://github.com/owner/repo"
         "http://github.com/owner/repo.git"
 
-    Trailing slashes, ``.git`` suffixes, and surrounding whitespace are
-    stripped automatically.
+    GitLab inputs additionally support nested namespaces::
+
+        "group/sub/project"
+        "https://gitlab.com/group/sub/project"
+        "https://gitlab.com/group/sub/project/-/releases/v1.2.3"
+
+    The provider is taken from *provider* when given, otherwise detected
+    from the URL host (with *gitlab_url* used to recognise self-hosted
+    instances).  Plain ``owner/repo`` strings default to GitHub.
+
+    Trailing slashes, ``.git`` suffixes, ``/-/...`` web paths, and
+    surrounding whitespace are stripped automatically.
 
     Args:
         s: A repository identifier string.
+        provider: Optional explicit provider (``"github"`` or ``"gitlab"``).
+        gitlab_url: Optional self-hosted GitLab base URL used for host
+            comparison.
 
     Returns:
-        A ``(owner, repo)`` tuple.
+        A ``(owner_or_namespace, repo)`` tuple.
 
     Raises:
-        ValueError: If the string cannot be parsed into owner/repo.
+        ValueError: If the string cannot be parsed into a repository.
     """
     s = s.strip()
     if not s:
         raise ValueError("Empty repository string")
 
-    # Strip URL scheme and leading path components
-    #
-    #   "https://github.com/owner/repo.git"  ->  "owner/repo.git"
-    #   "http://github.com/owner/repo"       ->  "owner/repo"
-    #   "owner/repo"                         ->  "owner/repo"
-    #
     if "://" in s:
-        # Take the part after the host (github.com/...)
+        # Take the part after the host (github.com/... or gitlab.com/...)
         after_scheme = s.split("://", 1)[1]
-        # Find the first '/' after the host
         parts = after_scheme.split("/")
-        # parts[0] is the host (github.com), parts[1:] is the path
+        # parts[0] is the host, parts[1:] is the path
         if len(parts) < 3:
             raise ValueError(
-                f"Cannot parse GitHub URL, expected at least 'host/owner/repo': {s!r}"
+                f"Cannot parse repository URL, expected at least "
+                f"'host/owner/repo': {s!r}"
             )
-        # Re-join everything after the host
+        host = parts[0]
         path = "/".join(parts[1:])
+        resolved = provider or _detect_provider_from_host(host, gitlab_url)
     else:
         path = s
+        resolved = provider or "github"
 
-    # Remove trailing .git and any trailing slashes
+    resolved = resolved.strip().lower()
+
+    if resolved == "gitlab":
+        # Drop the GitLab web sub-path (e.g. "/-/releases/v1.2.3").
+        if "/-/" in path:
+            path = path.split("/-/", 1)[0]
+        path = path.rstrip("/")
+        if path.endswith(".git"):
+            path = path[:-4]
+        path = path.rstrip("/")
+
+        if "/" not in path:
+            raise ValueError(
+                f"Repository string must contain a '/' separator: {s!r}"
+            )
+
+        # GitLab namespaces may be nested: split at the *last* slash.
+        owner, repo = path.rsplit("/", 1)
+        if not owner or not repo:
+            raise ValueError(
+                f"Could not extract both namespace and project from: {s!r}"
+            )
+        return owner, repo
+
+    # GitHub / legacy parsing -- behaviour must stay identical.
     if path.endswith(".git"):
         path = path[:-4]
     path = path.rstrip("/")
@@ -395,10 +460,15 @@ def parse_repo_string(s: str) -> tuple[str, str]:
     return owner, repo
 
 
-def parse_full_repo_url(s: str) -> tuple[str, str, str | None]:
-    """Extract ``(owner, repo, version)`` from a GitHub repo or release URL.
+def parse_full_repo_url(
+    s: str,
+    provider: str | None = None,
+    gitlab_url: str | None = None,
+) -> tuple[str, str, str | None]:
+    """Extract ``(namespace, repo, version)`` from a repo or release URL.
 
-    Extends :func:`parse_repo_string` with release URL support::
+    Extends :func:`parse_repo_string` with release URL support for both
+    providers::
 
         "https://github.com/owner/repo/releases/tag/v1.2.3"
             -> ("owner", "repo", "v1.2.3")
@@ -406,14 +476,22 @@ def parse_full_repo_url(s: str) -> tuple[str, str, str | None]:
         "https://github.com/owner/repo/releases/latest"
             -> ("owner", "repo", "latest")
 
+        "https://gitlab.com/group/sub/proj/-/releases/v1.2.3"
+            -> ("group/sub", "proj", "v1.2.3")
+
+        "https://gitlab.com/group/sub/proj/-/releases/permalink/latest"
+            -> ("group/sub", "proj", "latest")
+
         "owner/repo"
             -> ("owner", "repo", None)
 
     Args:
-        s: A GitHub repository or release URL string.
+        s: A repository or release URL string.
+        provider: Optional explicit provider (``"github"`` or ``"gitlab"``).
+        gitlab_url: Optional self-hosted GitLab base URL.
 
     Returns:
-        A ``(owner, repo, version_or_None)`` tuple.
+        A ``(owner_or_namespace, repo, version_or_None)`` tuple.
 
     Raises:
         ValueError: If the string cannot be parsed.
@@ -422,24 +500,41 @@ def parse_full_repo_url(s: str) -> tuple[str, str, str | None]:
     if not s:
         raise ValueError("Empty repository string")
 
-    # Check if this is a full release URL with /releases/ path
     version: str | None = None
+    lower = s.lower()
 
-    if "://" in s and "/releases/" in s.lower():
-        # Split on /releases/ to get the version part
+    # -- GitLab release URLs: .../-/releases/<tag> or .../-/releases/permalink/latest
+    marker = "/-/releases/"
+    if marker in lower:
+        marker_index = lower.index(marker)
+        before = s[:marker_index]
+        after = s[marker_index + len(marker):]
+        segments = [segment for segment in after.split("/") if segment]
+        if len(segments) >= 2 and segments[0] == "permalink" and segments[1] == "latest":
+            version = "latest"
+        elif segments:
+            version = segments[0]
+        owner, repo = parse_repo_string(
+            before, provider="gitlab", gitlab_url=gitlab_url
+        )
+        return owner, repo, version
+
+    # -- GitHub release URLs (legacy behaviour, plus trailing-segment trim)
+    if "://" in s and "/releases/" in lower:
         before, after = s.rsplit("/releases/", 1)
-        # after is like "tag/v6.17.0" or "latest"
         if after.startswith("tag/"):
-            version = after[4:]  # strip "tag/"
+            version = after[4:].split("/", 1)[0]  # strip "tag/" and extras
         else:
-            version = after  # "latest" or other
-
-        # Now parse owner/repo from the part before /releases/
-        owner, repo = parse_repo_string(before)
+            version = after  # "latest" (unchanged legacy behaviour)
+        owner, repo = parse_repo_string(
+            before, provider=provider, gitlab_url=gitlab_url
+        )
         return owner, repo, version
 
     # Fall back to regular repo parsing (no version in URL)
-    owner, repo = parse_repo_string(s)
+    owner, repo = parse_repo_string(
+        s, provider=provider, gitlab_url=gitlab_url
+    )
     return owner, repo, None
 
 
