@@ -191,13 +191,27 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument(
         "output",
         nargs="?",
-        default="gh-dl-config.json",
+        default=None,
         help='Output path (default: gh-dl-config.json)',
     )
     init.add_argument(
         "--user", "-u",
         action="store_true",
         help="Generate a user config file for persistent settings (token, proxy)",
+    )
+    init.add_argument(
+        "--global",
+        dest="global_config",
+        action="store_true",
+        help=(
+            "Write the global user config "
+            "(%APPDATA%\\gh-dl\\config.json or ~/.config/gh-dl/config.json)"
+        ),
+    )
+    init.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite an existing config file",
     )
 
     # -- list ---------------------------------------------------------------
@@ -485,15 +499,40 @@ def _handle_init(args: argparse.Namespace) -> int:
     """Execute the ``init`` subcommand.
 
     Returns:
-        0 on success.
+        0 on success, 2 if the target config already exists (and ``--force``
+        was not given) or if ``--global`` is combined with an output path.
     """
-    if args.user:
-        path = create_user_config_example()
-        print(f"Example user configuration written to {path}")
-        print("Edit the file and fill in your GitHub token and proxy settings.")
-    else:
-        create_example_config(args.output)
-        print(f"Example configuration written to {args.output}")
+    if args.user or args.global_config:
+        if args.global_config and args.output is not None:
+            print(
+                "Error: an output path cannot be combined with --global.",
+                file=sys.stderr,
+            )
+            return 2
+
+        try:
+            if args.global_config:
+                path = create_user_config_example(
+                    global_=True, overwrite=args.force
+                )
+            else:
+                path = create_user_config_example(overwrite=args.force)
+        except FileExistsError as exc:
+            print(f"Config already exists: {exc}", file=sys.stderr)
+            print("Use --force to overwrite it.", file=sys.stderr)
+            return 2
+
+        print(f"Example user configuration written to {os.path.abspath(path)}")
+        print(
+            "Supported keys: github_token, gitlab_token, http_proxy, "
+            "https_proxy, gitlab_url, github_api_url"
+        )
+        print("Edit the file and fill in your tokens and proxy settings.")
+        return 0
+
+    output = args.output or "gh-dl-config.json"
+    create_example_config(output)
+    print(f"Example configuration written to {output}")
     return 0
 
 

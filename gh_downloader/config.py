@@ -268,20 +268,37 @@ class UserConfig:
     github_api_url: str | None = None
 
 
-def _user_config_paths() -> list[Path]:
-    """Return user config file paths in priority order (first found wins)."""
-    paths: list[Path] = []
-    # 1. Current-directory .gh-dl.json
-    paths.append(Path(".gh-dl.json").resolve())
-    # 2. Platform-specific config dir
+def global_user_config_path() -> Path:
+    """Return the platform-specific global user config path.
+
+    Windows: ``%APPDATA%/gh-dl/config.json`` (falls back to
+    ``~/AppData/Roaming/gh-dl/config.json`` when ``APPDATA`` is unset).
+    Linux/macOS: ``$XDG_CONFIG_HOME/gh-dl/config.json`` when set, otherwise
+    ``~/.config/gh-dl/config.json``.
+
+    Returns
+    -------
+    Path
+        The global user config file path (the file may not exist yet).
+    """
     if sys.platform == "win32":
         base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
     else:
-        base = Path.home() / ".config"
-    paths.append(base / "gh-dl" / "config.json")
-    # 3. Home-directory dotfile
-    paths.append(Path.home() / ".gh-dl.json")
-    return paths
+        xdg_config_home = os.environ.get("XDG_CONFIG_HOME")
+        base = Path(xdg_config_home) if xdg_config_home else Path.home() / ".config"
+    return base / "gh-dl" / "config.json"
+
+
+def _user_config_paths() -> list[Path]:
+    """Return user config file paths in priority order (first found wins)."""
+    return [
+        # 1. Current-directory .gh-dl.json
+        Path(".gh-dl.json").resolve(),
+        # 2. Platform-specific global config dir
+        global_user_config_path(),
+        # 3. Home-directory dotfile
+        Path.home() / ".gh-dl.json",
+    ]
 
 
 def load_user_config() -> UserConfig:
@@ -315,22 +332,47 @@ def load_user_config() -> UserConfig:
     return UserConfig()
 
 
-def create_user_config_example(path: str | None = None) -> str:
+def create_user_config_example(
+    path: str | None = None,
+    *,
+    global_: bool = False,
+    overwrite: bool = False,
+) -> str:
     """Write an example user config JSON file.
 
     Parameters
     ----------
     path:
-        Destination path.  If ``None``, uses the first path from
-        :func:`_user_config_paths` (``.gh-dl.json`` in CWD).
+        Destination path.  If ``None``, uses
+        :func:`global_user_config_path` when *global_* is ``True``; otherwise
+        uses the first path from :func:`_user_config_paths`
+        (``.gh-dl.json`` in the CWD).
+    global_:
+        When ``True`` and *path* is ``None``, write to the platform global
+        user config path.
+    overwrite:
+        When ``False`` (default) and the target file already exists, raise
+        :class:`FileExistsError` instead of overwriting it.
 
     Returns
     -------
     str
-        The absolute path that was written to.
+        The path that was written to.
+
+    Raises
+    ------
+    FileExistsError
+        If the target file exists and *overwrite* is ``False``.
     """
     if path is None:
-        path = str(_user_config_paths()[0])
+        path = (
+            str(global_user_config_path())
+            if global_
+            else str(_user_config_paths()[0])
+        )
+
+    if not overwrite and os.path.exists(path):
+        raise FileExistsError(path)
 
     example = {
         "//_comment": (
@@ -347,7 +389,9 @@ def create_user_config_example(path: str | None = None) -> str:
         "github_api_url": "https://api.github.com",
     }
 
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(example, fh, indent=2, ensure_ascii=False)
         fh.write("\n")

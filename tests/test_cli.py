@@ -5,7 +5,9 @@ Tests for the CLI argument parsing (``gh_downloader.cli``).
 from __future__ import annotations
 
 import argparse
+import json
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -101,3 +103,93 @@ class TestImplicitDownload:
     def test_bare_command_still_interactive(self, monkeypatch):
         monkeypatch.setattr("builtins.input", lambda _: "n")
         assert run_cli([]) == 0
+
+
+# ---------------------------------------------------------------------------
+# init --global / --force
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def global_config_target(monkeypatch, tmp_path) -> Path:
+    """Redirect every user-level config lookup under *tmp_path*.
+
+    Guarantees tests never touch the developer's real home / APPDATA.
+    """
+    target = tmp_path / "global" / "gh-dl" / "config.json"
+    monkeypatch.setattr(
+        "gh_downloader.config.global_user_config_path",
+        lambda: target,
+    )
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    return target
+
+
+class TestInitGlobal:
+    def test_parser_accepts_global_flag(self):
+        args = build_parser().parse_args(["init", "--global"])
+        assert args.global_config is True
+
+    def test_parser_accepts_force_flag(self):
+        args = build_parser().parse_args(["init", "--user", "--force"])
+        assert args.force is True
+
+    def test_parser_defaults(self):
+        args = build_parser().parse_args(["init"])
+        assert args.output is None
+        assert args.user is False
+        assert args.global_config is False
+        assert args.force is False
+
+    def test_run_cli_writes_only_to_global_path(
+        self, global_config_target, tmp_path
+    ):
+        assert run_cli(["init", "--global"]) == 0
+
+        assert global_config_target.is_file()
+        data = json.loads(global_config_target.read_text(encoding="utf-8"))
+        assert "github_token" in data
+
+        # Nothing else was written anywhere under tmp_path.
+        written = sorted(tmp_path.rglob("*.json"))
+        assert written == [global_config_target]
+
+    def test_second_run_without_force_returns_2_and_preserves_file(
+        self, global_config_target, capsys
+    ):
+        assert run_cli(["init", "--global"]) == 0
+        first = global_config_target.read_text(encoding="utf-8")
+
+        assert run_cli(["init", "--global"]) == 2
+
+        assert global_config_target.read_text(encoding="utf-8") == first
+        err = capsys.readouterr().err
+        assert "already exists" in err
+        assert "--force" in err
+
+    def test_force_overwrites_existing_global_config(self, global_config_target):
+        global_config_target.parent.mkdir(parents=True)
+        global_config_target.write_text('{"stale": true}\n', encoding="utf-8")
+
+        assert run_cli(["init", "--global", "--force"]) == 0
+
+        data = json.loads(global_config_target.read_text(encoding="utf-8"))
+        assert "github_token" in data
+        assert "stale" not in data
+
+    def test_global_with_output_path_returns_2(
+        self, global_config_target, capsys
+    ):
+        assert run_cli(["init", "--global", "foo.json"]) == 2
+        assert not global_config_target.exists()
+        assert "--global" in capsys.readouterr().err
+
+    def test_user_still_writes_to_cwd(
+        self, global_config_target, monkeypatch, tmp_path
+    ):
+        monkeypatch.chdir(tmp_path)
+
+        assert run_cli(["init", "--user"]) == 0
+
+        assert (tmp_path / ".gh-dl.json").is_file()
+        assert not global_config_target.exists()

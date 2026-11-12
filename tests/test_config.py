@@ -5,6 +5,8 @@ Tests for the configuration module (``gh_downloader.config``).
 from __future__ import annotations
 
 import json
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -13,8 +15,11 @@ from gh_downloader.config import (
     ConfigError,
     RepoConfig,
     UserConfig,
+    _user_config_paths,
     create_example_config,
+    create_user_config_example,
     detect_format,
+    global_user_config_path,
     load_config,
     load_user_config,
     validate_config,
@@ -285,3 +290,106 @@ class TestUserConfig:
         # load_user_config searches in priority order; our tmp_path file won't
         # be found unless we patch the search path — just verify the dataclass default
         assert isinstance(result, UserConfig)
+
+
+# -- global_user_config_path -------------------------------------------------
+
+
+class TestGlobalUserConfigPath:
+    def test_windows_uses_appdata(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setenv("APPDATA", str(tmp_path / "AppData" / "Roaming"))
+        expected = tmp_path / "AppData" / "Roaming" / "gh-dl" / "config.json"
+        assert global_user_config_path() == expected
+
+    def test_windows_falls_back_to_home_when_appdata_unset(
+        self, monkeypatch, tmp_path
+    ):
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.delenv("APPDATA", raising=False)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        expected = tmp_path / "AppData" / "Roaming" / "gh-dl" / "config.json"
+        assert global_user_config_path() == expected
+
+    def test_posix_uses_xdg_config_home(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+        expected = tmp_path / "xdg" / "gh-dl" / "config.json"
+        assert global_user_config_path() == expected
+
+    def test_posix_falls_back_to_home_config(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(sys, "platform", "darwin")
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        expected = tmp_path / ".config" / "gh-dl" / "config.json"
+        assert global_user_config_path() == expected
+
+    def test_search_order_uses_global_path(self, monkeypatch, tmp_path):
+        global_path = tmp_path / "global" / "gh-dl" / "config.json"
+        monkeypatch.setattr(
+            "gh_downloader.config.global_user_config_path",
+            lambda: global_path,
+        )
+        monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+
+        paths = _user_config_paths()
+        assert paths[0] == Path(".gh-dl.json").resolve()
+        assert paths[1] == global_path
+        assert paths[2] == tmp_path / "home" / ".gh-dl.json"
+
+
+# -- create_user_config_example ----------------------------------------------
+
+
+class TestCreateUserConfigExample:
+    def test_global_writes_valid_json_to_global_path(
+        self, monkeypatch, tmp_path
+    ):
+        target = tmp_path / "global" / "gh-dl" / "config.json"
+        monkeypatch.setattr(
+            "gh_downloader.config.global_user_config_path",
+            lambda: target,
+        )
+
+        written = create_user_config_example(global_=True)
+
+        assert Path(written) == target
+        assert target.is_file()
+        data = json.loads(target.read_text(encoding="utf-8"))
+        for key in (
+            "github_token",
+            "gitlab_token",
+            "http_proxy",
+            "https_proxy",
+            "gitlab_url",
+            "github_api_url",
+        ):
+            assert key in data
+
+    def test_existing_file_raises_without_overwrite(self, tmp_path):
+        target = tmp_path / "config.json"
+        target.write_text("keep me\n", encoding="utf-8")
+
+        with pytest.raises(FileExistsError):
+            create_user_config_example(str(target))
+
+        assert target.read_text(encoding="utf-8") == "keep me\n"
+
+    def test_overwrite_replaces_existing_file(self, tmp_path):
+        target = tmp_path / "config.json"
+        target.write_text("stale\n", encoding="utf-8")
+
+        written = create_user_config_example(str(target), overwrite=True)
+
+        assert Path(written) == target
+        data = json.loads(target.read_text(encoding="utf-8"))
+        assert "github_token" in data
+
+    def test_bare_filename_does_not_create_directories(
+        self, monkeypatch, tmp_path
+    ):
+        # os.path.dirname("bare.json") == "" must not trigger os.makedirs("").
+        monkeypatch.chdir(tmp_path)
+        written = create_user_config_example("bare.json")
+        assert Path(written) == Path("bare.json")
+        assert (tmp_path / "bare.json").is_file()
