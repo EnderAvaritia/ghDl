@@ -36,7 +36,14 @@ downloads/
 tmp/
 *.part
 .coverage
+.coverage.*
 
 # PyInstaller
 *.spec
 /.omo
+
+# Test / tool caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.tox/

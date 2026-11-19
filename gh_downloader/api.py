@@ -58,14 +58,22 @@ class GitHubClient:
     base_url:
         Base URL of the GitHub API.  Defaults to ``https://api.github.com``.
         Can be changed for GitHub Enterprise.
+    proxy_prefix:
+        Optional ghproxy-style mirror prefix (e.g. ``https://ghfast.top``)
+        prepended to GitHub download URLs.  Download requests go through a
+        separate unauthenticated session so the token never reaches the
+        mirror or the asset CDN.
     """
 
     def __init__(
         self,
         token: Optional[str] = None,
         base_url: str = "https://api.github.com",
+        proxy_prefix: str | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
+        normalized_prefix = proxy_prefix.strip() if proxy_prefix else ""
+        self._proxy_prefix = normalized_prefix.rstrip("/") or None
 
         self._session = requests.Session()
         self._session.headers.update({
@@ -78,6 +86,10 @@ class GitHubClient:
         self._token = raw_token.strip("\"'") if raw_token else None
         if self._token:
             self._session.headers["Authorization"] = f"Bearer {self._token}"
+
+        # Download session deliberately carries no auth headers so tokens
+        # never leak to the asset CDN or a third-party mirror.
+        self._download_session = requests.Session()
 
     # -- Public helpers ----------------------------------------------------
 
@@ -175,6 +187,29 @@ class GitHubClient:
         """Return the ``browser_download_url`` from an asset dict."""
         return asset["browser_download_url"]
 
+    def rewrite_download_url(self, url: str) -> str:
+        """Prepend the configured mirror prefix to a download *url*.
+
+        Only absolute ``http://`` / ``https://`` URLs are rewritten; any
+        other value is returned unchanged.  With no prefix configured this
+        method is the identity.
+
+        Parameters
+        ----------
+        url:
+            The original download URL.
+
+        Returns
+        -------
+        str
+            The mirrored URL, or *url* unchanged.
+        """
+        if self._proxy_prefix and (
+            url.startswith("http://") or url.startswith("https://")
+        ):
+            return f"{self._proxy_prefix}/{url}"
+        return url
+
     # -- Download -----------------------------------------------------------
 
     def download_asset(
@@ -204,6 +239,7 @@ class GitHubClient:
         ------
         NetworkError
         """
+        url = self.rewrite_download_url(url)
         headers: Dict[str, str] = {}
         mode = "wb"
         if resume_bytes > 0:
@@ -211,7 +247,7 @@ class GitHubClient:
             mode = "ab"
 
         try:
-            response = self._session.get(url, stream=True, headers=headers)
+            response = self.open_download(url, headers)
             response.raise_for_status()
         except requests.exceptions.ConnectionError as e:
             raise NetworkError(
@@ -232,8 +268,19 @@ class GitHubClient:
         url: str,
         headers: dict[str, str] | None = None,
     ) -> requests.Response:
-        """Return a streaming response for *url*, reusing the authenticated session."""
-        return self._session.get(url, stream=True, headers=dict(headers or {}))
+        """Return a streaming response for *url*.
+
+        When a mirror prefix is configured the request goes through the
+        unauthenticated download session so the GitHub token is never sent
+        to the mirror or CDN.  Without a prefix the authenticated API
+        session is used, preserving the original behaviour.
+        """
+        request_headers = dict(headers or {})
+        if self._proxy_prefix:
+            return self._download_session.get(
+                url, stream=True, headers=request_headers
+            )
+        return self._session.get(url, stream=True, headers=request_headers)
 
     # -- Internal request helpers ------------------------------------------
 

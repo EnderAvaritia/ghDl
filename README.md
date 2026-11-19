@@ -40,8 +40,12 @@ gh-dl 是一个命令行工具，用于从 GitHub 或 GitLab 的 Release 页面�
 - 扁平输出：可选择不创建 `owner/repo/version` 层级目录
 - 模拟运行：`--dry-run` 预览将下载的文件，不实际写入
 - 认证支持：通过环境变量或用户配置文件提供 Token，提升 API 限频配额
+- 全局限速：`--limit-rate` 设置所有并发线程共享的总带宽上限，支持 `500K`、`2M` 等写法
+- 镜像加速：`--ghproxy` 用 ghproxy 风格的 URL 前缀改写 GitHub 下载地址，只影响下载，API 请求仍直连
 - 多平台支持：GitHub 与 GitLab，包含自建 GitLab 和嵌套 group 命名空间
 - 持久配置：Token 和代理设置写入文件，无需每个终端重新设置
+
+> **定位**：与 `gh release download` 和 `yuler/gh-download` 相比，本工具的差异主要在 GitLab 支持（含自建实例、嵌套 group）与配置文件批量下载。只下载单个 GitHub 仓库的少量文件时，官方 `gh` 命令已经够用。
 
 ## 安装
 
@@ -218,7 +222,9 @@ gh-dl init --global --force
   "gitlab_url": "https://gitlab.com",
   "http_proxy": "http://127.0.0.1:7890",
   "https_proxy": "http://127.0.0.1:7890",
-  "download_sources": true
+  "download_sources": true,
+  "limit_rate": "",
+  "ghproxy": ""
 }
 ```
 
@@ -233,6 +239,8 @@ gh-dl init --global --force
 | `http_proxy` | string | 无 | HTTP 代理地址 |
 | `https_proxy` | string | 无 | HTTPS 代理地址 |
 | `download_sources` | bool | `true` | 是否默认下载源码包；设为 `false` 时默认跳过源码包 |
+| `limit_rate` | string / int | 无 | 全局限速值，如 `"500K"`、`"2M"`，`0` 表示不限速；等价于 `--limit-rate` |
+| `ghproxy` | string | 无 | ghproxy 风格的镜像前缀，如 `"https://ghfast.top"`；等价于 `--ghproxy`，也可由环境变量 `GH_PROXY` 提供 |
 
 #### 搜索顺序
 
@@ -247,6 +255,8 @@ gh-dl init --global --force
 #### 环境变量优先级
 
 环境变量（`GITHUB_TOKEN`、`GITLAB_TOKEN`、`HTTP_PROXY`、`HTTPS_PROXY`）优先级高于配置文件。同时设置时以环境变量为准。
+
+`GH_PROXY` 的优先级与上面相反：`--ghproxy` 高于用户配置的 `ghproxy`，用户配置又高于环境变量 `GH_PROXY`。即命令行参数 > 用户配置 > 环境变量。
 
 ### 仓库配置文件
 
@@ -393,6 +403,8 @@ gh-dl <repo> [-p <pattern> ...] [options]      # 等价简写
 | `--flat` | 扁平输出，不创建 `owner/repo/version` 层级 |
 | `--dry-run` | 模拟运行，不实际写入文件 |
 | `--concurrent`, `-j` | 并发下载数，默认 4 |
+| `--limit-rate` | 总带宽上限（所有并发线程共享），如 `500K`、`2M`、`1.5M`、`10 MB/s`；`0` 表示不限速，默认不限速 |
+| `--ghproxy` | ghproxy 风格的 GitHub 下载镜像前缀，如 `https://ghfast.top`；只改写下载地址，API 请求仍直连 GitHub |
 | `--no-cache` | 跳过缓存，强制重新下载 |
 | `--no-sources` | 跳过源码包（源码包默认下载） |
 | `--provider` | `github` 或 `gitlab`（默认自动判断） |
@@ -414,6 +426,8 @@ gh-dl config <config_file> [options]
 | `--flat` | 全局扁平输出覆盖 |
 | `--dry-run` | 模拟运行 |
 | `--concurrent`, `-j` | 并发下载数，默认 4 |
+| `--limit-rate` | 总带宽上限（所有并发线程共享），如 `500K`、`2M`、`1.5M`、`10 MB/s`；`0` 表示不限速，默认不限速；每个仓库分别计算 |
+| `--ghproxy` | ghproxy 风格的 GitHub 下载镜像前缀，如 `https://ghfast.top`；只改写下载地址，API 请求仍直连 GitHub |
 | `--regex` | 将配置文件中的 `pattern` 解释为正则表达式而非 glob |
 | `--no-sources` | 跳过源码包 |
 | `--provider` | `github` 或 `gitlab`（默认自动判断） |
@@ -527,6 +541,53 @@ gh-dl download neovim/neovim -p ".*\.(msi|exe)$" -p "win64.*" --regex
 gh-dl config repos.json --output ./archives
 tar -czf releases.tar.gz ./archives
 ```
+
+### 限速与镜像加速
+
+`--limit-rate` 限制所有并发线程共享的总带宽，常见写法有 `500K`、`1M`、`1.5M`、`10 MB/s`，`0` 表示不限速。默认不限速。
+
+```bash
+# 单个仓库限速 500 KB/s
+gh-dl neovim/neovim -p "*.zip" --limit-rate 500K
+```
+
+批量下载时同样可以限速，每个仓库分别计算额度：
+
+```bash
+gh-dl config repos.json --limit-rate 1M
+```
+
+`--ghproxy` 用 ghproxy 风格的镜像前缀改写 GitHub 下载地址：
+
+```bash
+gh-dl neovim/neovim -p "*.zip" --ghproxy https://ghfast.top
+```
+
+它只改写 Release 资源与源码包的下载链接，API 请求仍然直连 GitHub。镜像只对 GitHub 公开仓库的下载地址生效；私有仓库下载和 API 请求都不经过镜像，因此镜像场景下不会携带 Token。
+
+想长期生效，可以写进用户配置：
+
+```json
+{
+  "ghproxy": "https://ghfast.top",
+  "limit_rate": "500K"
+}
+```
+
+也可以用环境变量提供镜像前缀，优先级为命令行参数 > 用户配置 > 环境变量：
+
+```bash
+# Linux / macOS
+export GH_PROXY="https://ghfast.top"
+
+# Windows PowerShell
+$env:GH_PROXY = "https://ghfast.top"
+
+# Windows CMD（不要加引号）
+set GH_PROXY=https://ghfast.top
+```
+
+> **与代理的区别**：`HTTP_PROXY` / `HTTPS_PROXY` 是 HTTP 代理，整个请求经由代理转发；`--ghproxy` 只是把 GitHub 下载 URL 换成镜像地址，两者用途不同，可以同时使用。
 
 ### 代理配置
 

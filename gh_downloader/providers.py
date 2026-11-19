@@ -53,6 +53,8 @@ class ReleaseClient(Protocol):
         self, url: str, headers: dict[str, str] | None = None
     ) -> requests.Response: ...
 
+    def rewrite_download_url(self, url: str) -> str: ...
+
 
 # ---------------------------------------------------------------------------
 # Provider detection
@@ -121,11 +123,14 @@ def create_client(
     gitlab_url: str | None = None,
     github_api_url: str | None = None,
     user_config: Any = None,
+    ghproxy: str | None = None,
 ) -> ReleaseClient:
     """Create the appropriate release client for *repo*.
 
     GitLab credentials/URLs come from the explicit parameters first, then
-    from *user_config*, then from environment variables / defaults.
+    from *user_config*, then from environment variables / defaults.  The
+    GitHub mirror prefix is resolved in the same order (explicit *ghproxy*,
+    ``user_config.ghproxy``, ``GH_PROXY``) and is ignored by GitLab.
     """
     config_gitlab_url = getattr(user_config, "gitlab_url", None)
     effective_gitlab_url = gitlab_url or config_gitlab_url
@@ -141,9 +146,27 @@ def create_client(
 
     config_api = getattr(user_config, "github_api_url", None)
     config_token = getattr(user_config, "github_token", None)
+    config_ghproxy = getattr(user_config, "ghproxy", None)
     api_url = github_api_url or config_api or "https://api.github.com"
     token = os.environ.get("GITHUB_TOKEN") or config_token
-    return GitHubClient(token=token, base_url=api_url)
+    effective_ghproxy = _clean_optional(
+        ghproxy
+    ) or _clean_optional(
+        config_ghproxy
+    ) or _clean_optional(
+        os.environ.get("GH_PROXY")
+    )
+    return GitHubClient(
+        token=token, base_url=api_url, proxy_prefix=effective_ghproxy
+    )
+
+
+def _clean_optional(value: str | None) -> str | None:
+    """Return *value* stripped, or ``None`` when blank / not a string."""
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
 
 
 # ---------------------------------------------------------------------------
@@ -323,6 +346,10 @@ class GitLabClient:
     def get_asset_download_url(asset: dict) -> str:
         """Return the direct download URL from an asset dict."""
         return asset["browser_download_url"]
+
+    def rewrite_download_url(self, url: str) -> str:
+        """Return *url* unchanged (mirrors are a GitHub-only feature)."""
+        return url
 
     def open_download(
         self,

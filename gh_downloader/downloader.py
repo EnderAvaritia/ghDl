@@ -20,6 +20,7 @@ import requests
 
 from gh_downloader.api import GitHubError, NetworkError
 from gh_downloader.utils import (
+    RateLimiter,
     build_output_path,
     ensure_dir,
     setup_signal_handler,
@@ -107,6 +108,7 @@ class DownloadManager:
         sources: bool = True,
         on_total_known: Optional[Callable[[int], None]] = None,
         skip_callback: Optional[Callable[[str], None]] = None,
+        rate_limiter: RateLimiter | None = None,
     ) -> DownloadResult:
         """Download assets matching *pattern* from a release.
 
@@ -146,6 +148,9 @@ class DownloadManager:
         skip_callback:
             Optional callback invoked with the asset name when an asset is
             skipped because it already exists in the cache.
+        rate_limiter:
+            Optional shared :class:`RateLimiter` that caps the total
+            bandwidth across all download threads.
 
         Returns
         -------
@@ -258,6 +263,7 @@ class DownloadManager:
                     dest_path,
                     resume=True,
                     progress_callback=progress_callback,
+                    rate_limiter=rate_limiter,
                 )
                 futures[future] = asset
 
@@ -319,6 +325,7 @@ class DownloadManager:
         dest_path: str,
         resume: bool = False,
         progress_callback: Optional[Callable[[str, int, int, float], None]] = None,
+        rate_limiter: RateLimiter | None = None,
     ) -> str:
         """Download a single release asset to *dest_path*.
 
@@ -339,6 +346,8 @@ class DownloadManager:
         progress_callback:
             Optional callback invoked with
             ``(name, bytes_downloaded, total_bytes, bytes_per_sec)``.
+        rate_limiter:
+            Optional shared :class:`RateLimiter` throttling the transfer.
 
         Returns
         -------
@@ -370,6 +379,7 @@ class DownloadManager:
                     asset_name=asset_name,
                     resume=resume,
                     progress_callback=progress_callback,
+                    rate_limiter=rate_limiter,
                 )
             except (requests.RequestException, OSError, GitHubError) as exc:
                 last_exc = exc
@@ -482,13 +492,19 @@ class DownloadManager:
         asset_name: str,
         resume: bool = False,
         progress_callback: Optional[Callable[[str, int, int, float], None]] = None,
+        rate_limiter: RateLimiter | None = None,
     ) -> str:
         """Low-level streaming download with progress and resume.
 
         Writes to a ``.part`` temporary file and renames it to
         *dest_path* only on success.  Handles the ``Range`` header for
         resume when a ``.part`` file already exists.
+
+        When *rate_limiter* is given, every received chunk is passed through
+        it so the shared download budget is respected.
         """
+        rewrite = getattr(self._client, "rewrite_download_url", lambda value: value)
+        url = rewrite(url)
         part_path = dest_path + ".part"
         resume_bytes = 0
 
@@ -539,6 +555,8 @@ class DownloadManager:
                     if chunk:
                         f.write(chunk)
                         downloaded += len(chunk)
+                        if rate_limiter is not None:
+                            rate_limiter.consume(len(chunk), self._stop_event)
 
                         if progress_callback:
                             elapsed = time.time() - start_time

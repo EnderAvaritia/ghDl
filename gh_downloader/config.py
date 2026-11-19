@@ -266,6 +266,8 @@ class UserConfig:
     gitlab_token: str | None = None
     gitlab_url: str | None = None
     github_api_url: str | None = None
+    limit_rate: str | int | None = None
+    ghproxy: str | None = None
 
 
 def global_user_config_path() -> Path:
@@ -318,6 +320,24 @@ def load_user_config() -> UserConfig:
             try:
                 with open(path, encoding="utf-8") as fh:
                     data = json.load(fh)
+
+                raw_limit_rate = data.get("limit_rate")
+                if isinstance(raw_limit_rate, str):
+                    limit_rate: str | int | None = (
+                        raw_limit_rate.strip() or None
+                    )
+                elif isinstance(raw_limit_rate, int):
+                    limit_rate = raw_limit_rate
+                else:
+                    limit_rate = None
+
+                raw_ghproxy = data.get("ghproxy")
+                ghproxy = (
+                    raw_ghproxy.strip() or None
+                    if isinstance(raw_ghproxy, str)
+                    else None
+                )
+
                 return UserConfig(
                     github_token=data.get("github_token"),
                     http_proxy=data.get("http_proxy"),
@@ -326,6 +346,8 @@ def load_user_config() -> UserConfig:
                     gitlab_token=data.get("gitlab_token"),
                     gitlab_url=data.get("gitlab_url"),
                     github_api_url=data.get("github_api_url"),
+                    limit_rate=limit_rate,
+                    ghproxy=ghproxy,
                 )
             except (json.JSONDecodeError, OSError):
                 continue
@@ -387,6 +409,8 @@ def create_user_config_example(
         "gitlab_token": "your_gitlab_token_here",
         "gitlab_url": "https://gitlab.com",
         "github_api_url": "https://api.github.com",
+        "limit_rate": "",
+        "ghproxy": "",
     }
 
     parent = os.path.dirname(path)

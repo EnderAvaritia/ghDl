@@ -27,11 +27,13 @@ from gh_downloader.config import (
 from gh_downloader.downloader import DownloadManager, DownloadResult
 from gh_downloader.providers import GitLabClient, create_client
 from gh_downloader.utils import (
+    RateLimiter,
     display_width,
     fit_line,
     format_size,
     format_speed,
     parse_full_repo_url,
+    parse_rate,
     terminal_width,
 )
 
@@ -57,6 +59,28 @@ def _add_provider_options(p: argparse.ArgumentParser) -> None:
         "--github-api-url",
         default=None,
         help="GitHub API base URL, e.g. GitHub Enterprise (default: https://api.github.com)",
+    )
+
+
+def _add_transfer_options(p: argparse.ArgumentParser) -> None:
+    """Add shared bandwidth and mirror options to a subparser."""
+    p.add_argument(
+        "--limit-rate",
+        default=None,
+        metavar="RATE",
+        help=(
+            "Total download bandwidth cap, e.g. 500K, 2M, 1.5MiB/s "
+            "(0 = unlimited; default: unlimited)"
+        ),
+    )
+    p.add_argument(
+        "--ghproxy",
+        default=None,
+        metavar="URL",
+        help=(
+            "ghproxy-style mirror prefix prepended to GitHub download URLs "
+            "(e.g. https://ghfast.top)"
+        ),
     )
 
 
@@ -140,6 +164,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip source code archives",
     )
     _add_provider_options(dl)
+    _add_transfer_options(dl)
 
     # -- config -------------------------------------------------------------
     cfg = subparsers.add_parser(
@@ -183,6 +208,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip source code archives",
     )
     _add_provider_options(cfg)
+    _add_transfer_options(cfg)
 
     # -- init ---------------------------------------------------------------
     init = subparsers.add_parser(
@@ -365,6 +391,27 @@ def _set_active_provider(client: object) -> None:
     _ACTIVE_PROVIDER = "gitlab" if isinstance(client, GitLabClient) else "github"
 
 
+def _resolve_limit_rate(args: argparse.Namespace) -> str | int | None:
+    """Resolve the effective rate limit: CLI override, then user config."""
+    cli_value = getattr(args, "limit_rate", None)
+    if cli_value is not None:
+        return cli_value
+    return getattr(_USER_CONFIG, "limit_rate", None)
+
+
+def _resolve_ghproxy(args: argparse.Namespace) -> str | None:
+    """Resolve the mirror prefix: CLI, then user config, then ``GH_PROXY``."""
+    candidates = (
+        getattr(args, "ghproxy", None),
+        getattr(_USER_CONFIG, "ghproxy", None),
+        os.environ.get("GH_PROXY"),
+    )
+    for candidate in candidates:
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    return None
+
+
 def _handle_download(args: argparse.Namespace) -> int:
     """Execute the ``download`` subcommand.
 
@@ -382,12 +429,20 @@ def _handle_download(args: argparse.Namespace) -> int:
     repo_full = f"{owner}/{repo}"
     patterns = args.patterns if args.patterns is not None else ["*"]
 
+    try:
+        rate = parse_rate(_resolve_limit_rate(args))
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+    limiter = RateLimiter(rate) if rate > 0 else None
+
     client = create_client(
         args.repo,
         provider=provider,
         gitlab_url=gitlab_url,
         github_api_url=github_api_url,
         user_config=_USER_CONFIG,
+        ghproxy=_resolve_ghproxy(args),
     )
     _set_active_provider(client)
     manager = DownloadManager(client=client)
@@ -407,6 +462,7 @@ def _handle_download(args: argparse.Namespace) -> int:
         progress_callback=tracker.update,
         on_total_known=tracker.set_total_assets,
         skip_callback=tracker.skip,
+        rate_limiter=limiter,
     )
 
     # Print summary
@@ -442,6 +498,13 @@ def _handle_config(args: argparse.Namespace) -> int:
     cli_gitlab_url = getattr(args, "gitlab_url", None)
     cli_github_api_url = getattr(args, "github_api_url", None)
 
+    try:
+        rate = parse_rate(_resolve_limit_rate(args))
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+    ghproxy = _resolve_ghproxy(args)
+
     for repo_cfg in config.repos:
         output_dir = args.output or repo_cfg.output or "./downloads"
         repo_full = f"{repo_cfg.owner}/{repo_cfg.repo}"
@@ -459,10 +522,15 @@ def _handle_config(args: argparse.Namespace) -> int:
             gitlab_url=cli_gitlab_url,
             github_api_url=cli_github_api_url,
             user_config=_USER_CONFIG,
+            ghproxy=ghproxy,
         )
         _set_active_provider(client)
         manager = DownloadManager(client=client)
         tracker = ProgressTracker()
+
+        # One limiter per repository: the cap applies within each repo's
+        # download batch rather than being shared across the whole config.
+        limiter = RateLimiter(rate) if rate > 0 else None
 
         result: DownloadResult = manager.download_release(
                 repo=repo_full,
@@ -477,6 +545,7 @@ def _handle_config(args: argparse.Namespace) -> int:
                 progress_callback=tracker.update,
                 on_total_known=tracker.set_total_assets,
                 skip_callback=tracker.skip,
+                rate_limiter=limiter,
             )
 
         if args.dry_run:
@@ -525,7 +594,7 @@ def _handle_init(args: argparse.Namespace) -> int:
         print(f"Example user configuration written to {os.path.abspath(path)}")
         print(
             "Supported keys: github_token, gitlab_token, http_proxy, "
-            "https_proxy, gitlab_url, github_api_url"
+            "https_proxy, gitlab_url, github_api_url, ghproxy, limit_rate"
         )
         print("Edit the file and fill in your tokens and proxy settings.")
         return 0

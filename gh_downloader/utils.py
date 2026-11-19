@@ -7,10 +7,12 @@ All functions use only the Python standard library.
 """
 
 import os
+import re
 import shutil
 import signal
 import sys
 import threading
+import time
 import unicodedata
 import urllib.parse
 
@@ -286,6 +288,159 @@ def format_speed(bytes_per_sec: float) -> str:
     if magnitude == 0:
         return f"{remaining:.1f} B/s"
     return f"{remaining:.1f} {unit}/s"
+
+
+# ---------------------------------------------------------------------------
+# Bandwidth rate limiting
+# ---------------------------------------------------------------------------
+
+#: Multipliers for the human-readable rate suffixes accepted by
+#: :func:`parse_rate`.  All suffixes are 1024-based because download tools
+#: conventionally express bandwidth in binary units.
+_RATE_MULTIPLIERS = {
+    "": 1,
+    "k": 1024,
+    "kb": 1024,
+    "kib": 1024,
+    "m": 1024 ** 2,
+    "mb": 1024 ** 2,
+    "mib": 1024 ** 2,
+    "g": 1024 ** 3,
+    "gb": 1024 ** 3,
+    "gib": 1024 ** 3,
+}
+
+
+def parse_rate(value: str | int | None) -> int:
+    """Parse a human-readable rate string into bytes per second.
+
+    ``None``, an empty string, ``"0"``, ``"off"``, ``"none"`` and
+    ``"unlimited"`` all mean "no limit" and return ``0``.  Bare integers
+    (strings or ``int`` objects) are interpreted as bytes per second.
+    Otherwise a decimal number may be followed by a case-insensitive
+    ``K``/``KB``/``KiB``, ``M``/``MB``/``MiB`` or ``G``/``GB``/``GiB``
+    suffix and an optional ``/s``::
+
+        "500K"      -> 512000
+        "1.5M"      -> 1572864
+        "10 MB/s"   -> 10485760
+        "2MiB/s"    -> 2097152
+
+    Args:
+        value: The rate to parse (string, integer, or ``None``).
+
+    Returns:
+        The equivalent rate in bytes per second, or ``0`` for unlimited.
+
+    Raises:
+        ValueError: If *value* is negative, malformed, or uses an unknown
+            unit suffix.
+    """
+    if value is None:
+        return 0
+    if isinstance(value, bool):
+        raise ValueError(f"Invalid rate value: {value!r}")
+    if isinstance(value, int):
+        if value < 0:
+            raise ValueError(f"Rate must be non-negative, got {value}")
+        return value
+    if not isinstance(value, str):
+        raise ValueError(
+            f"Rate must be a string or int, got {type(value).__name__}"
+        )
+
+    text = value.strip().lower()
+    if not text or text in {"0", "off", "none", "unlimited"}:
+        return 0
+
+    # Strip the optional per-second suffix ("500K/s", "2MiB /s", ...).
+    if text.endswith("/s"):
+        text = text[:-2].rstrip()
+
+    match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?|\.[0-9]+)\s*([a-z]*)", text)
+    if match is None:
+        raise ValueError(
+            f"Invalid rate {value!r}; expected a number with an optional "
+            "K/KB/KiB, M/MB/MiB or G/GB/GiB suffix (e.g. '500K', '2M', "
+            "'1.5MiB/s') or 0 for unlimited."
+        )
+
+    number_text, suffix = match.group(1), match.group(2)
+    multiplier = _RATE_MULTIPLIERS.get(suffix)
+    if multiplier is None:
+        raise ValueError(
+            f"Unknown rate suffix {suffix!r} in {value!r}; expected one of "
+            "K, KB, KiB, M, MB, MiB, G, GB, GiB."
+        )
+
+    return int(float(number_text) * multiplier)
+
+
+class RateLimiter:
+    """Thread-safe average-rate pacer shared by all download workers.
+
+    A single instance is created per :meth:`DownloadManager.download_release`
+    call so that ``--limit-rate`` caps the **total** bandwidth rather than
+    each thread's bandwidth.  Accounting is based on :func:`time.monotonic`.
+
+    Parameters
+    ----------
+    bytes_per_second:
+        Maximum average rate in bytes per second.  Values ``<= 0`` mean
+        unlimited, in which case :meth:`consume` does nothing.
+    """
+
+    def __init__(self, bytes_per_second: int) -> None:
+        self._bytes_per_second = int(bytes_per_second)
+        self._lock = threading.Lock()
+        self._start: float | None = None
+        self._consumed = 0
+
+    @property
+    def bytes_per_second(self) -> int:
+        """The configured cap in bytes per second (``0`` means unlimited)."""
+        return self._bytes_per_second
+
+    def consume(
+        self,
+        nbytes: int,
+        stop_event: threading.Event | None = None,
+    ) -> None:
+        """Account for *nbytes* and sleep until the average rate is met.
+
+        The lock is only held while updating counters and computing the
+        delay; sleeping happens outside the lock so concurrent download
+        threads can pace themselves independently.  Sleeps are sliced into
+        chunks of at most 0.2 seconds so a set *stop_event* (Ctrl+C) is
+        noticed promptly.
+
+        Args:
+            nbytes: Number of bytes just transferred.
+            stop_event: Optional event that aborts the sleep early.  The
+                method returns without raising when the event is set.
+
+        Raises:
+            ValueError: If *nbytes* is negative.
+        """
+        if nbytes < 0:
+            raise ValueError(f"nbytes must be non-negative, got {nbytes}")
+        if self._bytes_per_second <= 0 or nbytes == 0:
+            return
+
+        with self._lock:
+            now = time.monotonic()
+            if self._start is None:
+                self._start = now
+            self._consumed += nbytes
+            allowed = (now - self._start) * self._bytes_per_second
+            delay = (self._consumed - allowed) / self._bytes_per_second
+
+        while delay > 0:
+            if stop_event is not None and stop_event.is_set():
+                return
+            slice_delay = min(delay, 0.2)
+            time.sleep(slice_delay)
+            delay -= slice_delay
 
 
 # ---------------------------------------------------------------------------
