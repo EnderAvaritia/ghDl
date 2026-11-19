@@ -14,6 +14,12 @@ on:
 permissions:
   contents: write
 
+# Serialize runs per git ref so a newer push cannot finish before an older one
+# and move the daily tag backwards. Queued runs are superseded by newer ones.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   # ── Build wheel + sdist ──────────────────────────────────────────────
   build-whl:
@@ -81,19 +87,36 @@ jobs:
           name: exe-dist
           path: exe-dist
 
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Set release tag
         shell: bash
         run: |
           input="${{ github.event.inputs.version }}"
           if [[ -n "$input" ]]; then
             tag="v${input#v}"
+            move_tag=false
           elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
             tag="${{ github.ref_name }}"
+            move_tag=false
           else
             tag="v$(date -u +%Y.%m.%d)"
+            move_tag=true
           fi
           echo "tag=$tag" >> "$GITHUB_ENV"
-          echo "Release tag: $tag"
+          echo "move_tag=$move_tag" >> "$GITHUB_ENV"
+          echo "Release tag: $tag (move_tag=$move_tag)"
+
+      # Same-day builds share one tag, so the tag has to follow the latest
+      # commit; otherwise the release's source archives stay at the first
+      # build of the day. Pushed with GITHUB_TOKEN, so it triggers no new run.
+      - name: Point date tag at current commit
+        if: env.move_tag == 'true'
+        shell: bash
+        run: |
+          git push --force origin "${GITHUB_SHA}:refs/tags/${tag}"
+          echo "Tag ${tag} -> ${GITHUB_SHA}"
 
       - name: Create / update release
         uses: ncipollo/release-action@v1
