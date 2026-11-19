@@ -384,7 +384,9 @@ def create_user_config_example(
     Raises
     ------
     FileExistsError
-        If the target file exists and *overwrite* is ``False``.
+        If the target file exists and *overwrite* is ``False``.  The existence
+        check and the write are atomic, so concurrent creators cannot both
+        succeed.
     """
     if path is None:
         path = (
@@ -392,9 +394,6 @@ def create_user_config_example(
             if global_
             else str(_user_config_paths()[0])
         )
-
-    if not overwrite and os.path.exists(path):
-        raise FileExistsError(path)
 
     example = {
         "//_comment": (
@@ -416,7 +415,18 @@ def create_user_config_example(
     parent = os.path.dirname(path)
     if parent:
         os.makedirs(parent, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as fh:
+
+    if overwrite:
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(example, fh, indent=2, ensure_ascii=False)
+            fh.write("\n")
+        return path
+
+    try:
+        fh = open(path, "x", encoding="utf-8")
+    except FileExistsError:
+        raise FileExistsError(path) from None
+    with fh:
         json.dump(example, fh, indent=2, ensure_ascii=False)
         fh.write("\n")
     return path

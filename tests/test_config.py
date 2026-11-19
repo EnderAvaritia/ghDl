@@ -4,9 +4,11 @@ Tests for the configuration module (``gh_downloader.config``).
 
 from __future__ import annotations
 
+import builtins
 import json
 import sys
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -393,3 +395,45 @@ class TestCreateUserConfigExample:
         written = create_user_config_example("bare.json")
         assert Path(written) == Path("bare.json")
         assert (tmp_path / "bare.json").is_file()
+
+    def test_existing_file_content_unchanged_without_overwrite(self, tmp_path):
+        target = tmp_path / "config.json"
+        original = b'{"github_token": "keep-me"}\n'
+        target.write_bytes(original)
+
+        with pytest.raises(FileExistsError):
+            create_user_config_example(str(target))
+
+        assert target.read_bytes() == original
+
+    def test_overwrite_writes_expected_keys(self, tmp_path):
+        target = tmp_path / "config.json"
+        target.write_text("stale\n", encoding="utf-8")
+
+        create_user_config_example(str(target), overwrite=True)
+
+        data = json.loads(target.read_text(encoding="utf-8"))
+        for key in ("github_token", "gitlab_token", "http_proxy"):
+            assert key in data
+
+    def test_non_overwrite_uses_exclusive_create_mode(self, tmp_path):
+        target = tmp_path / "config.json"
+        real_open = builtins.open
+        recorded_modes: list[tuple[str, str]] = []
+
+        def recording_open(file, mode="r", *args, **kwargs):
+            recorded_modes.append((str(file), mode))
+            return real_open(file, mode, *args, **kwargs)
+
+        with mock.patch("builtins.open", side_effect=recording_open):
+            create_user_config_example(str(target))
+
+        assert (str(target), "x") in recorded_modes
+
+    def test_creates_missing_parent_directories(self, tmp_path):
+        target = tmp_path / "nested" / "dir" / ".gh-dl.json"
+
+        written = create_user_config_example(str(target))
+
+        assert Path(written) == target
+        assert target.is_file()

@@ -10,6 +10,7 @@ from __future__ import annotations
 import fnmatch
 import os
 import re
+import sys
 import time
 import threading
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
@@ -19,6 +20,7 @@ from typing import Any, Callable, Optional, Union
 import requests
 
 from gh_downloader.api import GitHubError, NetworkError
+from gh_downloader.locking import LOCK_FILENAME, DirLock
 from gh_downloader.utils import (
     RateLimiter,
     build_output_path,
@@ -85,11 +87,20 @@ class DownloadManager:
     ----------
     client:
         An authenticated (or anonymous) release provider client.
+    on_lock_wait:
+        Optional callback invoked with the lock-file path when another
+        ``gh-dl`` process holds the output directory lock.  When omitted a
+        message is printed to ``stderr``.
     """
 
-    def __init__(self, client: Any) -> None:
+    def __init__(
+        self,
+        client: Any,
+        on_lock_wait: Optional[Callable[[str], None]] = None,
+    ) -> None:
         self._client: Any = client
         self._stop_event: threading.Event = threading.Event()
+        self._on_lock_wait: Optional[Callable[[str], None]] = on_lock_wait
 
     # -- Public API ---------------------------------------------------------
 
@@ -226,92 +237,110 @@ class DownloadManager:
         output_dir_abs = os.path.abspath(output_dir)
         ensure_dir(output_dir_abs)
 
-        from concurrent.futures import Future
-
-        futures: dict[Future[Any], dict[str, Any]] = {}
-
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            for asset in matched:
-                if self._stop_event.is_set():
-                    break
-
-                dest_path = build_output_path(
-                    output_dir_abs,
-                    owner,
-                    repo_name,
-                    version,
-                    asset["name"],
-                    flat=flat,
+        # -- Serialise processes writing into the same output directory ----
+        # Acquire the lock *before* any cache check so a waiting process sees
+        # the files finished by the process it was waiting for and skips them.
+        lock = DirLock(os.path.join(output_dir_abs, LOCK_FILENAME))
+        if self._on_lock_wait is not None:
+            on_wait = self._on_lock_wait
+        else:
+            def on_wait(_lock_path: str) -> None:
+                print(
+                    f"Another gh-dl instance is downloading into "
+                    f"'{output_dir_abs}'; waiting for it to finish...",
+                    file=sys.stderr,
                 )
 
-                # ---- Smart cache check (done in the main thread) ----------
-                asset_size = asset.get("size", 0)
-                if not no_cache and self.check_cache(dest_path, asset_size):
-                    result.skipped += 1
-                    name = asset["name"]
-                    if skip_callback:
-                        skip_callback(name)
-                    continue
+        lock.acquire(on_wait=on_wait)
+        try:
+            from concurrent.futures import Future
 
-                # ---- Ensure parent directory exists -----------------------
-                ensure_dir(os.path.dirname(dest_path))
+            futures: dict[Future[Any], dict[str, Any]] = {}
 
-                # ---- Submit download task ---------------------------------
-                future = executor.submit(
-                    self.download_asset,
-                    asset,
-                    dest_path,
-                    resume=True,
-                    progress_callback=progress_callback,
-                    rate_limiter=rate_limiter,
-                )
-                futures[future] = asset
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                for asset in matched:
+                    if self._stop_event.is_set():
+                        break
 
-            # -- Collect results as they complete ---------------------------
-            # Use a polling loop instead of as_completed() so Ctrl+C
-            # (which only sets stop_event on Windows) is detected promptly.
-            while futures:
-                if self._stop_event.is_set():
-                    # Mark remaining futures as cancelled
-                    for f in futures:
-                        f.cancel()
-                    # Remove incomplete .part files for cancelled futures
-                    for f, asset in futures.items():
-                        if not f.done():
-                            part_path = build_output_path(
-                                output_dir_abs,
-                                owner,
-                                repo_name,
-                                version,
-                                asset["name"],
-                                flat=flat,
-                            ) + ".part"
-                            if os.path.exists(part_path):
-                                try:
-                                    os.remove(part_path)
-                                except OSError:
-                                    pass
-                    break
+                    dest_path = build_output_path(
+                        output_dir_abs,
+                        owner,
+                        repo_name,
+                        version,
+                        asset["name"],
+                        flat=flat,
+                    )
 
-                # Poll with short timeout so stop_event is checked regularly
-                done, _ = wait(
-                    list(futures.keys()),
-                    timeout=0.5,
-                    return_when=FIRST_COMPLETED,
-                )
+                    # ---- Smart cache check (done in the main thread) ------
+                    asset_size = asset.get("size", 0)
+                    if not no_cache and self.check_cache(dest_path, asset_size):
+                        result.skipped += 1
+                        name = asset["name"]
+                        if skip_callback:
+                            skip_callback(name)
+                        continue
 
-                for future in done:
-                    asset = futures.pop(future)
-                    asset_name = asset["name"]
-                    try:
-                        future.result()
-                        result.downloaded += 1
-                    except KeyboardInterrupt:
-                        # Re-raise immediately – no point continuing
-                        raise
-                    except Exception as exc:
-                        result.failed += 1
-                        result.errors.append(f"{asset_name}: {exc}")
+                    # ---- Ensure parent directory exists -------------------
+                    ensure_dir(os.path.dirname(dest_path))
+
+                    # ---- Submit download task -----------------------------
+                    future = executor.submit(
+                        self.download_asset,
+                        asset,
+                        dest_path,
+                        resume=True,
+                        progress_callback=progress_callback,
+                        rate_limiter=rate_limiter,
+                    )
+                    futures[future] = asset
+
+                # -- Collect results as they complete ----------------------
+                # Use a polling loop instead of as_completed() so Ctrl+C
+                # (which only sets stop_event on Windows) is detected promptly.
+                while futures:
+                    if self._stop_event.is_set():
+                        # Mark remaining futures as cancelled
+                        for f in futures:
+                            f.cancel()
+                        # Remove incomplete .part files for cancelled futures
+                        for f, asset in futures.items():
+                            if not f.done():
+                                part_path = build_output_path(
+                                    output_dir_abs,
+                                    owner,
+                                    repo_name,
+                                    version,
+                                    asset["name"],
+                                    flat=flat,
+                                ) + ".part"
+                                if os.path.exists(part_path):
+                                    try:
+                                        os.remove(part_path)
+                                    except OSError:
+                                        pass
+                        break
+
+                    # Poll with short timeout so stop_event is checked regularly
+                    done, _ = wait(
+                        list(futures.keys()),
+                        timeout=0.5,
+                        return_when=FIRST_COMPLETED,
+                    )
+
+                    for future in done:
+                        asset = futures.pop(future)
+                        asset_name = asset["name"]
+                        try:
+                            future.result()
+                            result.downloaded += 1
+                        except KeyboardInterrupt:
+                            # Re-raise immediately – no point continuing
+                            raise
+                        except Exception as exc:
+                            result.failed += 1
+                            result.errors.append(f"{asset_name}: {exc}")
+        finally:
+            lock.release()
 
         return result
 
@@ -379,6 +408,7 @@ class DownloadManager:
                     asset_name=asset_name,
                     resume=resume,
                     progress_callback=progress_callback,
+                    expected_size=asset_info.get("size", 0),
                     rate_limiter=rate_limiter,
                 )
             except (requests.RequestException, OSError, GitHubError) as exc:
@@ -492,24 +522,69 @@ class DownloadManager:
         asset_name: str,
         resume: bool = False,
         progress_callback: Optional[Callable[[str, int, int, float], None]] = None,
+        expected_size: int = 0,
+        allow_restart: bool = True,
         rate_limiter: RateLimiter | None = None,
     ) -> str:
         """Low-level streaming download with progress and resume.
 
-        Writes to a ``.part`` temporary file and renames it to
-        *dest_path* only on success.  Handles the ``Range`` header for
-        resume when a ``.part`` file already exists.
+        Writes to a ``.part`` temporary file and atomically moves it to
+        *dest_path* only on success.  When resuming, the server response is
+        validated (``Content-Range`` start offset / 206 vs. 200 / 416) before
+        any bytes are appended, so a stale or invalid ``.part`` file is never
+        merged with a full body.
 
         When *rate_limiter* is given, every received chunk is passed through
         it so the shared download budget is respected.
+
+        Parameters
+        ----------
+        url:
+            Download URL.
+        dest_path:
+            Final filesystem path for the downloaded file.
+        asset_name:
+            Asset name used in messages and progress callbacks.
+        resume:
+            If ``True``, attempt to resume from an existing ``.part`` file.
+        progress_callback:
+            Optional callback invoked with
+            ``(name, bytes_downloaded, total_bytes, bytes_per_sec)``.
+        expected_size:
+            Expected final size in bytes (``0`` means unknown).  Used to
+            discard an implausible ``.part`` prefix and to verify the
+            finished file before it replaces the destination.
+        allow_restart:
+            Internal flag preventing infinite restart recursion; the second
+            attempt disables it.
+        rate_limiter:
+            Optional shared bandwidth pacer applied to every chunk.
+
+        Returns
+        -------
+        str
+            *dest_path* on success.
+
+        Raises
+        ------
+        NetworkError
+            If the finished file size does not match *expected_size*.
         """
         rewrite = getattr(self._client, "rewrite_download_url", lambda value: value)
         url = rewrite(url)
+
         part_path = dest_path + ".part"
         resume_bytes = 0
 
         if resume and os.path.exists(part_path):
             resume_bytes = os.path.getsize(part_path)
+            if expected_size > 0 and resume_bytes >= expected_size:
+                # The .part cannot be a valid prefix of the expected file.
+                try:
+                    os.remove(part_path)
+                except OSError:
+                    pass
+                resume_bytes = 0
 
         headers: dict[str, str] = {}
         mode = "wb"
@@ -529,12 +604,60 @@ class DownloadManager:
             response = self._client._session.get(
                 url, stream=True, headers=headers
             )
+
+        # -- Validate the server's answer before touching the .part file ----
+        range_total: Optional[int] = None
+        if resume_bytes > 0:
+            status = response.status_code
+
+            def _restart() -> str:
+                """Drop the .part file and retry once from scratch."""
+                response.close()
+                try:
+                    os.remove(part_path)
+                except OSError:
+                    pass
+                return self._stream_download(
+                    url,
+                    dest_path,
+                    asset_name,
+                    resume=False,
+                    progress_callback=progress_callback,
+                    expected_size=expected_size,
+                    allow_restart=False,
+                    rate_limiter=rate_limiter,
+                )
+
+            if status == 416 and allow_restart:
+                # Requested range is not satisfiable: the prefix is stale.
+                return _restart()
+
+            if status == 206:
+                content_range = response.headers.get("content-range", "")
+                match = re.search(r"bytes\s+(\d+)-", content_range)
+                if match is None or int(match.group(1)) != resume_bytes:
+                    # Server resumed at the wrong offset -- start over.
+                    if allow_restart:
+                        return _restart()
+                else:
+                    total_match = re.search(r"/\s*(\d+)\s*$", content_range)
+                    if total_match is not None:
+                        range_total = int(total_match.group(1))
+            elif status == 200:
+                # Server ignored Range and sent the whole body: never append
+                # it onto the existing part file.
+                resume_bytes = 0
+                mode = "wb"
+
+        # Raise here (as before) once resume-specific checks have run.
         response.raise_for_status()
 
         # Determine total transfer size
         content_length = response.headers.get("content-length")
         total_size = resume_bytes
-        if content_length:
+        if range_total is not None:
+            total_size = range_total
+        elif content_length:
             total_size = resume_bytes + int(content_length)
 
         downloaded = resume_bytes
@@ -555,6 +678,9 @@ class DownloadManager:
                     if chunk:
                         f.write(chunk)
                         downloaded += len(chunk)
+
+                        # Pace the transfer before reporting progress so the
+                        # displayed speed reflects the throttle.
                         if rate_limiter is not None:
                             rate_limiter.consume(len(chunk), self._stop_event)
 
@@ -574,9 +700,21 @@ class DownloadManager:
                     pass
             raise
 
-        # Atomically replace the final destination
-        if os.path.exists(dest_path):
-            os.remove(dest_path)
-        os.rename(part_path, dest_path)
+        # -- Verify the finished size before publishing the file -----------
+        if expected_size > 0:
+            actual_size = os.path.getsize(part_path)
+            if actual_size != expected_size:
+                try:
+                    os.remove(part_path)
+                except OSError:
+                    pass
+                raise NetworkError(
+                    f"Size mismatch for {asset_name!r}: expected "
+                    f"{expected_size} bytes, got {actual_size}"
+                )
+
+        # Atomic on both Windows and POSIX when the target is not held open
+        # by another process.
+        os.replace(part_path, dest_path)
 
         return dest_path
