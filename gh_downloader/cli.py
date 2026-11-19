@@ -231,7 +231,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Write the global user config "
-            "(%APPDATA%\\gh-dl\\config.json or ~/.config/gh-dl/config.json)"
+            "(%%APPDATA%%\\gh-dl\\config.json or ~/.config/gh-dl/config.json)"
         ),
     )
     init.add_argument(

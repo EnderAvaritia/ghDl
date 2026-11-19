@@ -40,6 +40,13 @@ class TestBuildParser:
         parser = build_parser()
         assert parser._subparsers is not None
 
+    def test_help_escapes_literal_percent(self):
+        """Help text with a literal % must be escaped as %% for argparse."""
+        parser = build_parser()
+        init_parser = parser._subparsers._group_actions[0].choices["init"]
+        help_text = init_parser.format_help()
+        assert "%APPDATA%" in help_text
+
 
 class TestRunCli:
     def test_no_args_returns_zero(self, monkeypatch):
