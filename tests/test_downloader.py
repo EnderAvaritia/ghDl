@@ -505,3 +505,129 @@ class TestDownloadReleaseLocking:
         assert not thread.is_alive()
         assert results and results[0].downloaded == 1
         assert (tmp_path / "asset.bin").read_bytes() == body
+
+    def test_non_flat_locks_version_directory(self, tmp_path):
+        body = b"DATA"
+        asset = self._asset(len(body))
+        client = FakeClient(
+            [FakeResponse(200, {"content-length": str(len(body))}, body)],
+            assets=[asset],
+        )
+        mgr = DownloadManager(client)
+
+        result = mgr.download_release(
+            repo="owner/repo",
+            pattern="*",
+            output_dir=str(tmp_path),
+            sources=False,
+            max_workers=1,
+        )
+
+        version_dir = tmp_path / "owner" / "repo" / "latest"
+        assert result.downloaded == 1
+        assert (version_dir / LOCK_FILENAME).exists()
+        assert (version_dir / "asset.bin").read_bytes() == body
+        assert not (tmp_path / LOCK_FILENAME).exists()
+
+    def test_different_repos_do_not_block(self, tmp_path):
+        body = b"DATA"
+        asset = self._asset(len(body))
+        client = FakeClient(
+            [FakeResponse(200, {"content-length": str(len(body))}, body)],
+            assets=[asset],
+        )
+
+        # Hold the lock for a different repository's version directory.
+        other_dir = tmp_path / "other" / "repo" / "latest"
+        other_dir.mkdir(parents=True)
+        held = DirLock(str(other_dir / LOCK_FILENAME))
+        held.acquire()
+
+        called = threading.Event()
+        wait_paths: list[str] = []
+        mgr = DownloadManager(
+            client,
+            on_lock_wait=lambda path: (wait_paths.append(path), called.set()),
+        )
+
+        try:
+            result = mgr.download_release(
+                repo="owner/repo",
+                pattern="*",
+                output_dir=str(tmp_path),
+                sources=False,
+                max_workers=1,
+            )
+        finally:
+            held.release()
+
+        assert result.downloaded == 1
+        assert not called.is_set()
+        assert wait_paths == []
+        assert (tmp_path / "owner" / "repo" / "latest" / "asset.bin").read_bytes() == body
+
+    def test_same_repo_version_non_flat_waits(self, tmp_path):
+        body = b"DATA"
+        asset = self._asset(len(body))
+        client = FakeClient(
+            [FakeResponse(200, {"content-length": str(len(body))}, body)],
+            assets=[asset],
+        )
+
+        version_dir = tmp_path / "owner" / "repo" / "latest"
+        version_dir.mkdir(parents=True)
+        held = DirLock(str(version_dir / LOCK_FILENAME))
+        held.acquire()
+
+        called = threading.Event()
+        wait_paths: list[str] = []
+        mgr = DownloadManager(
+            client,
+            on_lock_wait=lambda path: (wait_paths.append(path), called.set()),
+        )
+        results: list[DownloadResult] = []
+
+        def run() -> None:
+            results.append(
+                mgr.download_release(
+                    repo="owner/repo",
+                    pattern="*",
+                    output_dir=str(tmp_path),
+                    sources=False,
+                    max_workers=1,
+                )
+            )
+
+        with patch(
+            "gh_downloader.downloader.setup_signal_handler",
+            return_value=threading.Event(),
+        ):
+            thread = threading.Thread(target=run)
+            thread.start()
+            try:
+                assert called.wait(5), "on_lock_wait was not invoked"
+                assert wait_paths == [str(version_dir / LOCK_FILENAME)]
+            finally:
+                held.release()
+            thread.join(10)
+
+        assert not thread.is_alive()
+        assert results and results[0].downloaded == 1
+        assert (version_dir / "asset.bin").read_bytes() == body
+
+    def test_zero_matched_assets_creates_no_version_dir_or_lock(self, tmp_path):
+        asset = self._asset(4)
+        client = FakeClient([], assets=[asset])
+        mgr = DownloadManager(client)
+
+        result = mgr.download_release(
+            repo="owner/repo",
+            pattern="*.does-not-match",
+            output_dir=str(tmp_path),
+            sources=False,
+        )
+
+        assert result.total == 0
+        assert result.downloaded == 0
+        assert not (tmp_path / "owner").exists()
+        assert not (tmp_path / LOCK_FILENAME).exists()
