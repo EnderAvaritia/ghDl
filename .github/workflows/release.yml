@@ -2,11 +2,13 @@ name: Build and Release
 
 on:
   push:
+    branches: [master]
+    tags: ['v*']
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version (e.g. 0.1.0)'
-        required: true
+        description: 'Release version override (defaults to current date, e.g. 2026.11.19)'
+        required: false
         type: string
 
 permissions:
@@ -82,21 +84,26 @@ jobs:
       - name: Set release tag
         shell: bash
         run: |
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            echo "tag=${{ github.ref_name }}" >> $GITHUB_ENV
+          input="${{ github.event.inputs.version }}"
+          if [[ -n "$input" ]]; then
+            tag="v${input#v}"
+          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            tag="${{ github.ref_name }}"
           else
-            echo "tag=continuous" >> $GITHUB_ENV
+            tag="v$(date -u +%Y.%m.%d)"
           fi
+          echo "tag=$tag" >> "$GITHUB_ENV"
+          echo "Release tag: $tag"
 
       - name: Create / update release
         uses: ncipollo/release-action@v1
         with:
           tag: ${{ env.tag }}
-          name: ${{ env.tag == 'continuous' && format('Continuous Build ({0})', github.sha) || format('Release {0}', env.tag) }}
+          name: Release ${{ env.tag }}
           allowUpdates: true
           omitBodyDuringUpdate: true
           replacesArtifacts: true
-          makeLatest: ${{ env.tag == 'continuous' && 'legacy' || 'true' }}
+          makeLatest: true
           artifacts: |
             whl-dist/*.whl
             whl-dist/*.tar.gz
