@@ -14,7 +14,7 @@ import requests
 
 from gh_downloader.api import GitHubClient, NetworkError
 from gh_downloader.downloader import DownloadManager, DownloadResult
-from gh_downloader.locking import LOCK_FILENAME, DirLock
+from gh_downloader.locking import DirLock, lock_path_for
 
 
 # -- DownloadResult ----------------------------------------------------------
@@ -434,7 +434,7 @@ class TestDownloadReleaseLocking:
 
         assert result.downloaded == 1
         assert result.failed == 0
-        assert (tmp_path / LOCK_FILENAME).exists()
+        assert os.path.exists(lock_path_for(str(tmp_path)))
         assert (tmp_path / "asset.bin").read_bytes() == body
 
     def test_dry_run_creates_neither_lock_nor_asset(self, tmp_path):
@@ -452,7 +452,7 @@ class TestDownloadReleaseLocking:
         )
 
         assert result.total == 1
-        assert not (tmp_path / LOCK_FILENAME).exists()
+        assert not os.path.exists(lock_path_for(str(tmp_path)))
         assert not (tmp_path / "asset.bin").exists()
 
     def test_download_release_waits_for_external_lock(self, tmp_path):
@@ -463,7 +463,8 @@ class TestDownloadReleaseLocking:
             assets=[asset],
         )
 
-        held = DirLock(str(tmp_path / LOCK_FILENAME))
+        expected_lock = lock_path_for(str(tmp_path))
+        held = DirLock(expected_lock)
         held.acquire()
 
         called = threading.Event()
@@ -497,7 +498,7 @@ class TestDownloadReleaseLocking:
             thread.start()
             try:
                 assert called.wait(5), "on_lock_wait was not invoked"
-                assert wait_paths == [str(tmp_path / LOCK_FILENAME)]
+                assert wait_paths == [expected_lock]
             finally:
                 held.release()
             thread.join(10)
@@ -525,9 +526,11 @@ class TestDownloadReleaseLocking:
 
         version_dir = tmp_path / "owner" / "repo" / "latest"
         assert result.downloaded == 1
-        assert (version_dir / LOCK_FILENAME).exists()
+        assert os.path.exists(lock_path_for(str(version_dir)))
         assert (version_dir / "asset.bin").read_bytes() == body
-        assert not (tmp_path / LOCK_FILENAME).exists()
+        # Lock file lives in the global lock dir, never inside the output tree.
+        assert not (version_dir / ".gh-dl.lock").exists()
+        assert not (tmp_path / ".gh-dl.lock").exists()
 
     def test_different_repos_do_not_block(self, tmp_path):
         body = b"DATA"
@@ -540,7 +543,7 @@ class TestDownloadReleaseLocking:
         # Hold the lock for a different repository's version directory.
         other_dir = tmp_path / "other" / "repo" / "latest"
         other_dir.mkdir(parents=True)
-        held = DirLock(str(other_dir / LOCK_FILENAME))
+        held = DirLock(lock_path_for(str(other_dir)))
         held.acquire()
 
         called = threading.Event()
@@ -576,7 +579,8 @@ class TestDownloadReleaseLocking:
 
         version_dir = tmp_path / "owner" / "repo" / "latest"
         version_dir.mkdir(parents=True)
-        held = DirLock(str(version_dir / LOCK_FILENAME))
+        expected_lock = lock_path_for(str(version_dir))
+        held = DirLock(expected_lock)
         held.acquire()
 
         called = threading.Event()
@@ -606,7 +610,7 @@ class TestDownloadReleaseLocking:
             thread.start()
             try:
                 assert called.wait(5), "on_lock_wait was not invoked"
-                assert wait_paths == [str(version_dir / LOCK_FILENAME)]
+                assert wait_paths == [expected_lock]
             finally:
                 held.release()
             thread.join(10)
@@ -630,4 +634,7 @@ class TestDownloadReleaseLocking:
         assert result.total == 0
         assert result.downloaded == 0
         assert not (tmp_path / "owner").exists()
-        assert not (tmp_path / LOCK_FILENAME).exists()
+        assert not os.path.exists(lock_path_for(str(tmp_path)))
+        assert not os.path.exists(
+            lock_path_for(str(tmp_path / "owner" / "repo" / "latest"))
+        )

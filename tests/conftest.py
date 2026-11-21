@@ -121,6 +121,16 @@ def temp_output_dir(tmp_path) -> str:
     return str(d)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_lock_dir(tmp_path, monkeypatch):
+    """Redirect cross-process lock files into a temp dir for every test.
+
+    Without this, downloads would create lock files under the real per-user
+    app-data directory, polluting the developer's machine.
+    """
+    monkeypatch.setenv("GH_DL_LOCK_DIR", str(tmp_path / "locks"))
+
+
 # ---------------------------------------------------------------------------
 # Mocked API client
 # ---------------------------------------------------------------------------

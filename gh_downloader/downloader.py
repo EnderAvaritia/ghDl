@@ -20,7 +20,7 @@ from typing import Any, Callable, Optional, Union
 import requests
 
 from gh_downloader.api import GitHubError, NetworkError
-from gh_downloader.locking import LOCK_FILENAME, DirLock
+from gh_downloader.locking import DirLock, lock_path_for
 from gh_downloader.utils import (
     RateLimiter,
     build_output_path,
@@ -246,23 +246,24 @@ class DownloadManager:
         # In hierarchy mode every asset lands under owner/repo/version, so
         # only that version directory needs a lock (different repos or
         # versions stay fully parallel).  Flat mode writes everything into
-        # the output root, so the root itself is the lock scope.
+        # the output root, so the root itself is the lock scope.  Lock files
+        # live in the global locks directory, never inside the output tree.
         if flat:
-            lock_dir = output_dir_abs
+            lock_scope = output_dir_abs
         else:
-            lock_dir = os.path.join(output_dir_abs, owner, repo_name, version)
-        ensure_dir(lock_dir)
+            lock_scope = os.path.join(output_dir_abs, owner, repo_name, version)
+        ensure_dir(lock_scope)
 
         # Acquire the lock *before* any cache check so a waiting process sees
         # the files finished by the process it was waiting for and skips them.
-        lock = DirLock(os.path.join(lock_dir, LOCK_FILENAME))
+        lock = DirLock(lock_path_for(lock_scope))
         if self._on_lock_wait is not None:
             on_wait = self._on_lock_wait
         else:
             def on_wait(_lock_path: str) -> None:
                 print(
                     f"Another gh-dl instance is downloading into "
-                    f"'{lock_dir}'; waiting for it to finish...",
+                    f"'{lock_scope}'; waiting for it to finish...",
                     file=sys.stderr,
                 )
 

@@ -10,7 +10,7 @@ import time
 
 import pytest
 
-from gh_downloader.locking import LOCK_FILENAME, DirLock
+from gh_downloader.locking import DirLock, lock_path_for, lock_root
 
 
 # -- Basic lifecycle ---------------------------------------------------------
@@ -18,7 +18,7 @@ from gh_downloader.locking import LOCK_FILENAME, DirLock
 
 class TestDirLockLifecycle:
     def test_acquire_release_reacquire(self, tmp_path):
-        lock_path = tmp_path / LOCK_FILENAME
+        lock_path = tmp_path / "test.lock"
         lock = DirLock(lock_path)
         assert lock.path == str(lock_path)
 
@@ -30,7 +30,7 @@ class TestDirLockLifecycle:
         lock.release()
 
     def test_context_manager(self, tmp_path):
-        lock_path = tmp_path / LOCK_FILENAME
+        lock_path = tmp_path / "test.lock"
         with DirLock(lock_path) as lock:
             assert lock.path == str(lock_path)
             assert lock_path.exists()
@@ -38,13 +38,13 @@ class TestDirLockLifecycle:
         assert lock_path.exists()
 
     def test_release_is_idempotent(self, tmp_path):
-        lock = DirLock(tmp_path / LOCK_FILENAME)
+        lock = DirLock(tmp_path / "test.lock")
         lock.acquire()
         lock.release()
         lock.release()  # must not raise
 
     def test_release_without_acquire_is_noop(self, tmp_path):
-        DirLock(tmp_path / LOCK_FILENAME).release()
+        DirLock(tmp_path / "test.lock").release()
 
 
 # -- Contention --------------------------------------------------------------
@@ -59,7 +59,7 @@ class TestDirLockContention:
         so a second ``os.open`` on the same path conflicts as it would for
         a second process.
         """
-        lock_path = tmp_path / LOCK_FILENAME
+        lock_path = tmp_path / "test.lock"
 
         first = DirLock(lock_path)
         first.acquire()
@@ -104,7 +104,7 @@ class TestDirLockContention:
 
     def test_keyboard_interrupt_while_waiting_releases_fd(self, tmp_path):
         """KeyboardInterrupt during the wait must close the fd, not leak it."""
-        lock_path = tmp_path / LOCK_FILENAME
+        lock_path = tmp_path / "test.lock"
 
         first = DirLock(lock_path)
         first.acquire()
@@ -127,7 +127,59 @@ class TestDirLockContention:
         fresh.release()
 
     def test_lock_file_survives_release(self, tmp_path):
-        lock_path = tmp_path / LOCK_FILENAME
+        lock_path = tmp_path / "test.lock"
         with DirLock(lock_path):
             pass
         assert os.path.exists(lock_path)
+
+
+# -- Lock location -----------------------------------------------------------
+
+
+class TestLockLocation:
+    def test_lock_root_honours_env_override(self, tmp_path, monkeypatch):
+        target = tmp_path / "custom-locks"
+        monkeypatch.setenv("GH_DL_LOCK_DIR", str(target))
+
+        assert lock_root() == str(target)
+        assert target.is_dir()
+
+    def test_lock_root_defaults_under_global_config(self, tmp_path, monkeypatch):
+        config_path = tmp_path / "cfg" / "config.json"
+        monkeypatch.delenv("GH_DL_LOCK_DIR", raising=False)
+        monkeypatch.setattr(
+            "gh_downloader.locking.global_user_config_path",
+            lambda: config_path,
+        )
+
+        expected = config_path.parent / "locks"
+        assert lock_root() == str(expected)
+        assert expected.is_dir()
+
+    def test_same_scope_maps_to_same_path(self, tmp_path):
+        scope = tmp_path / "owner" / "repo" / "latest"
+
+        assert lock_path_for(scope) == lock_path_for(scope)
+
+    def test_different_scopes_map_to_different_paths(self, tmp_path):
+        first = lock_path_for(tmp_path / "owner" / "repo" / "v1")
+        second = lock_path_for(tmp_path / "owner" / "repo" / "v2")
+
+        assert first != second
+        assert first.endswith(".lock")
+        assert second.endswith(".lock")
+
+    def test_lock_file_lives_in_lock_root_not_in_scope(self, tmp_path):
+        scope = tmp_path / "downloads"
+        scope.mkdir()
+        lock_path = lock_path_for(scope)
+
+        assert os.path.dirname(lock_path) == lock_root()
+        assert not (scope / os.path.basename(lock_path)).exists()
+
+        with DirLock(lock_path):
+            assert os.path.exists(lock_path)
+
+        # The lock directory itself stays untouched by locking.
+        assert scope.is_dir()
+        assert os.listdir(scope) == []

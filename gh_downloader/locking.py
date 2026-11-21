@@ -6,24 +6,39 @@ Implements :class:`DirLock`, a small advisory file lock used to serialise
 backed by an OS-level advisory lock (``msvcrt.locking`` on Windows,
 ``fcntl.flock`` elsewhere) on byte 0 of a dedicated lock file.
 
-The lock file is intentionally **never deleted**: removing it would allow a
+Lock files are kept **out of the download directory** and centralised in a
+per-user lock directory under gh-dl's global config directory (see
+:func:`lock_root`), one file per locked scope named after the SHA-256 of the
+scope's absolute path (see :func:`lock_path_for`).  This keeps download
+output clean while still serialising every process that targets the same
+scope.
+
+A lock file is intentionally **never deleted**: removing it would allow a
 second process to create a fresh inode and lock that, defeating the whole
 point of the lock.  The file is truncated and stamped with the owning PID
 so it remains useful for debugging.
-
-Only the Python standard library is used.
 """
 
 from __future__ import annotations
 
 import errno
+import hashlib
 import os
 import time
+from pathlib import Path
 from typing import Callable, Optional
 
+from gh_downloader.config import global_user_config_path
 
-#: Name of the lock file created inside an output directory.
-LOCK_FILENAME = ".gh-dl.lock"
+
+#: Sub-directory (under gh-dl's global config dir) holding lock files.
+LOCKS_DIRNAME = "locks"
+
+#: Suffix for generated lock file names.
+LOCK_SUFFIX = ".lock"
+
+#: Environment variable overriding the lock directory (mainly for tests).
+LOCK_DIR_ENV = "GH_DL_LOCK_DIR"
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +117,62 @@ def _is_busy(exc: OSError) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Lock location
+# ---------------------------------------------------------------------------
+
+
+def lock_root() -> str:
+    """Return the directory that holds cross-process lock files.
+
+    By default this is ``locks/`` inside gh-dl's global config directory:
+
+    * Windows: ``%APPDATA%/gh-dl/locks``
+    * Linux/macOS: ``$XDG_CONFIG_HOME/gh-dl/locks`` (or
+      ``~/.config/gh-dl/locks``)
+
+    The directory is created if missing.  Set the ``GH_DL_LOCK_DIR``
+    environment variable to override the location.
+
+    Returns
+    -------
+    str
+        Absolute path to the lock directory.
+    """
+    override = os.environ.get(LOCK_DIR_ENV)
+    if override:
+        base: Path = Path(override).expanduser()
+    else:
+        base = global_user_config_path().parent / LOCKS_DIRNAME
+    root = os.path.abspath(os.fspath(base))
+    os.makedirs(root, exist_ok=True)
+    return root
+
+
+def lock_path_for(scope: str | os.PathLike[str]) -> str:
+    """Map a lock *scope* to its lock-file path inside :func:`lock_root`.
+
+    The *scope* is the directory whose writers must be serialised (in
+    hierarchy mode the ``owner/repo/version`` directory, in flat mode the
+    output root).  The file name is the SHA-256 of the scope's normalised
+    absolute path, so every process targeting the same scope maps to the same
+    lock file while different scopes never collide.
+
+    Parameters
+    ----------
+    scope:
+        Directory that defines the locking scope.  It does not need to exist.
+
+    Returns
+    -------
+    str
+        Path to the lock file (the file itself is created on acquire).
+    """
+    scope_key = os.path.normcase(os.path.abspath(os.fspath(scope)))
+    digest = hashlib.sha256(scope_key.encode("utf-8")).hexdigest()
+    return os.path.join(lock_root(), digest + LOCK_SUFFIX)
+
+
+# ---------------------------------------------------------------------------
 # DirLock
 # ---------------------------------------------------------------------------
 
@@ -112,8 +183,7 @@ class DirLock:
     Parameters
     ----------
     lock_path:
-        Path to the lock file, normally
-        ``os.path.join(output_dir, LOCK_FILENAME)``.
+        Path to the lock file, normally produced by :func:`lock_path_for`.
     """
 
     def __init__(self, lock_path: str | os.PathLike[str]) -> None:
