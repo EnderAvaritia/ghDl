@@ -2,7 +2,6 @@ name: Build and Release
 
 on:
   push:
-    branches: [master]
     tags: ['v*']
   workflow_dispatch:
     inputs:
@@ -14,8 +13,8 @@ on:
 permissions:
   contents: write
 
-# Serialize runs per git ref so a newer push cannot finish before an older one
-# and move the daily tag backwards. Queued runs are superseded by newer ones.
+# Serialize runs per git ref so two builds of the same tag cannot race while
+# publishing release assets. Queued runs are superseded by newer ones.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
@@ -90,6 +89,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Tag pushes build under their own tag name; only a manual dispatch
+      # without a version falls back to a date tag that has to be created here.
       - name: Set release tag
         shell: bash
         run: |
@@ -108,9 +109,9 @@ jobs:
           echo "move_tag=$move_tag" >> "$GITHUB_ENV"
           echo "Release tag: $tag (move_tag=$move_tag)"
 
-      # Same-day builds share one tag, so the tag has to follow the latest
-      # commit; otherwise the release's source archives stay at the first
-      # build of the day. Pushed with GITHUB_TOKEN, so it triggers no new run.
+      # A manual dispatch without a version creates the date tag here, and it
+      # has to follow the current commit or the release's source archives stay
+      # at an older build. Pushed with GITHUB_TOKEN, so it triggers no new run.
       - name: Point date tag at current commit
         if: env.move_tag == 'true'
         shell: bash
